@@ -74,14 +74,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     quote! {
         #[derive(Clone, Debug, Default, PartialEq)]
-        struct #builder_ident {
+        pub struct #builder_ident {
             #(#builder_fields,)*
         }
 
         impl #builder_ident {
             #(#builder_methods)*
 
-            fn build(&self) -> std::result::Result<#ident, Box<dyn std::error::Error>> {
+            pub fn build(&self) -> std::result::Result<#ident, Box<dyn std::error::Error>> {
                 Ok(#ident {
                     #(#result_fields,)*
                 })
@@ -89,7 +89,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #ident {
-            fn builder () -> #builder_ident {
+            pub fn builder () -> #builder_ident {
                 #builder_ident::default()
             }
         }
