@@ -25,12 +25,28 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let ident = &field.ident;
         let ty = &field.ty;
 
+        if let syn::Type::Path(p) = ty {
+            if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
+                return quote! { #ident: #ty };
+            }
+        }
+
         quote! { #ident: std::option::Option<#ty> }
     });
 
     let builder_methods = fields.iter().map(|field| {
         let ident = &field.ident;
         let ty = &field.ty;
+
+        if let syn::Type::Path(p) = ty {
+            if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
+                return quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
+                    self.#ident = #ident.into();
+
+                    self
+                }};
+            }
+        }
 
         quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
             let _ = self.#ident.insert(#ident.into());
@@ -39,8 +55,17 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }}
     });
 
-    let build_fields = fields.iter().map(|field| {
+    let result_fields = fields.iter().map(|field| {
         let ident = &field.ident;
+        let ty = &field.ty;
+
+        if let syn::Type::Path(p) = ty {
+            if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
+                return quote! {
+                    #ident: self.#ident.clone()
+                };
+            }
+        }
 
         quote! {
             #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
@@ -58,7 +83,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
             fn build(&self) -> std::result::Result<#ident, Box<dyn std::error::Error>> {
                 Ok(#ident {
-                    #(#build_fields,)*
+                    #(#result_fields,)*
                 })
             }
         }
