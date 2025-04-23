@@ -1,4 +1,3 @@
-use proc_macro::TokenStream;
 use quote::quote;
 use syn::{self, parse_macro_input};
 
@@ -17,31 +16,29 @@ fn each_method_each_ident(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
 
         let mut tokens = tokens.clone().into_iter();
 
-        if tokens.next().is_some_and(|t| {
-            let proc_macro2::TokenTree::Ident(ident) = t else {
-                return false;
-            };
-
-            ident == "each"
-        }) && tokens.next().is_some_and(|t| {
-            let proc_macro2::TokenTree::Punct(punct) = t else {
-                return false;
-            };
-
-            punct.as_char() == '='
-        }) {
-            let Some(proc_macro2::TokenTree::Literal(literal)) = tokens.next() else {
-                return None;
-            };
-
-            let syn::Lit::Str(literal) = syn::Lit::new(literal) else {
-                return None;
-            };
-
-            Some(syn::Ident::new(&literal.value(), literal.span()))
-        } else {
-            None
+        let Some(proc_macro2::TokenTree::Ident(ident)) = tokens.next() else {
+            return None;
+        };
+        if ident != "each" {
+            return None;
         }
+
+        let Some(proc_macro2::TokenTree::Punct(punct)) = tokens.next() else {
+            return None;
+        };
+        if punct.as_char() != '=' {
+            return None;
+        }
+
+        let Some(proc_macro2::TokenTree::Literal(literal)) = tokens.next() else {
+            return None;
+        };
+
+        let syn::Lit::Str(literal) = syn::Lit::new(literal) else {
+            return None;
+        };
+
+        Some(syn::Ident::new(&literal.value(), literal.span()))
     })
 }
 
@@ -77,121 +74,144 @@ fn inner_type(outer_type: &syn::Type) -> Option<&syn::Type> {
     Some(inner_type)
 }
 
-fn each_method(
-    syn::Field {
-        attrs, ident, ty, ..
-    }: &syn::Field,
-) -> Option<(syn::Ident, proc_macro2::TokenStream)> {
-    let each_ident = each_method_each_ident(attrs)?;
-    let internal_ty = inner_type(ty)?.clone();
-    let outer_ident = ident.clone()?;
+struct EachMethod {
+    ident: syn::Ident,
+    token_stream: proc_macro2::TokenStream,
+}
 
-    Some((
-        each_ident.clone(),
-        quote! {pub fn #each_ident(&mut self, #each_ident: impl Into<#internal_ty>) -> &mut Self {
-            self.#outer_ident.get_or_insert_default().push(#each_ident.into());
+impl EachMethod {
+    fn ident_token_stream_tuple(self) -> (syn::Ident, proc_macro2::TokenStream) {
+        (self.ident, self.token_stream)
+    }
+}
 
-            self
-        }},
-    ))
+impl TryFrom<syn::Field> for EachMethod {
+    type Error = ();
+
+    fn try_from(
+        syn::Field {
+            ty, attrs, ident, ..
+        }: syn::Field,
+    ) -> Result<Self, Self::Error> {
+        let each_ident = each_method_each_ident(&attrs).ok_or(())?;
+        let internal_ty = inner_type(&ty).ok_or(())?.clone();
+        let outer_ident = ident.clone().ok_or(())?;
+
+        Ok(EachMethod {
+            ident: each_ident.clone(),
+            token_stream: quote! {pub fn #each_ident(&mut self, #each_ident: impl Into<#internal_ty>) -> &mut Self {
+                self.#outer_ident.get_or_insert_default().push(#each_ident.into());
+
+                self
+            }},
+        })
+    }
+}
+
+fn builder_field(field: &syn::Field) -> proc_macro2::TokenStream {
+    let ident = &field.ident;
+    let ty = &field.ty;
+
+    if let syn::Type::Path(p) = ty {
+        if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
+            return quote! { #ident: #ty };
+        }
+    }
+
+    quote! { #ident: std::option::Option<#ty> }
+}
+
+fn is_not_each_method(each_methods_idents: &[syn::Ident], field: &syn::Field) -> bool {
+    !field
+        .ident
+        .clone()
+        .is_some_and(|ident| each_methods_idents.contains(&ident))
+}
+
+fn builder_method(field: &syn::Field) -> proc_macro2::TokenStream {
+    let ident = &field.ident;
+    let ty = &field.ty;
+
+    if let syn::Type::Path(p) = ty {
+        if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
+            return quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
+                self.#ident = #ident.into();
+
+                self
+            }};
+        }
+    }
+
+    quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
+        let _ = self.#ident.insert(#ident.into());
+
+        self
+    }}
+}
+
+fn result_field(field: &syn::Field) -> proc_macro2::TokenStream {
+    let ident = &field.ident;
+    let ty = &field.ty;
+
+    if let syn::Type::Path(p) = ty {
+        if p.path.segments.len() == 1 {
+            if p.path.segments[0].ident == "Option" {
+                return quote! {
+                    #ident: self.#ident.clone()
+                };
+            } else if p.path.segments[0].ident == "Vec" {
+                return quote! {
+                    #ident: self.#ident.clone().unwrap_or_default()
+                };
+            }
+        }
+    }
+
+    quote! {
+        #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
+    }
 }
 
 #[proc_macro_derive(Builder, attributes(builder))]
-pub fn derive(input: TokenStream) -> TokenStream {
+pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(input as syn::DeriveInput);
 
     let ident = &ast.ident;
     let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
 
-    let each_methods = if let syn::Data::Struct(syn::DataStruct { ref fields, .. }) = ast.data {
-        if let syn::Fields::Named(syn::FieldsNamed { named, .. }) = fields {
-            named
-                .iter()
-                .filter(|&field| has_builder_attribute(field))
-                .filter_map(|field| each_method(field))
-                .collect()
-        } else {
-            vec![]
-        }
-    } else {
-        vec![]
-    };
-    let (each_methods_idents, each_methods): (Vec<_>, Vec<_>) = each_methods.into_iter().unzip();
-
-    let fields = if let syn::Data::Struct(syn::DataStruct {
+    let (each_methods_idents, each_methods) = if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
         ..
     }) = ast.data
     {
         named
+            .iter()
+            .filter(|&field| has_builder_attribute(field))
+            .filter_map(|f| EachMethod::try_from(f.clone()).ok())
+            .map(EachMethod::ident_token_stream_tuple)
+            .unzip()
     } else {
-        unimplemented!()
+        (vec![], vec![])
     };
 
-    let builder_fields = fields.iter().map(|field| {
-        let ident = &field.ident;
-        let ty = &field.ty;
+    let syn::Data::Struct(syn::DataStruct {
+        fields: syn::Fields::Named(syn::FieldsNamed {
+            named: ref fields, ..
+        }),
+        ..
+    }) = ast.data
+    else {
+        unimplemented!();
+    };
 
-        if let syn::Type::Path(p) = ty {
-            if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
-                return quote! { #ident: #ty };
-            }
-        }
-
-        quote! { #ident: std::option::Option<#ty> }
-    });
+    let builder_fields = fields.iter().map(builder_field);
 
     let builder_methods = fields
         .iter()
-        .filter(|&field| {
-            !field
-                .ident
-                .clone()
-                .is_some_and(|ident| each_methods_idents.contains(&ident))
-        })
-        .map(|field| {
-            let ident = &field.ident;
-            let ty = &field.ty;
+        .filter(|&field| is_not_each_method(&each_methods_idents, field))
+        .map(builder_method);
 
-            if let syn::Type::Path(p) = ty {
-                if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
-                    return quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
-                        self.#ident = #ident.into();
-
-                        self
-                    }};
-                }
-            }
-
-            quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
-                let _ = self.#ident.insert(#ident.into());
-
-                self
-            }}
-        });
-
-    let result_fields = fields.iter().map(|field| {
-        let ident = &field.ident;
-        let ty = &field.ty;
-
-        if let syn::Type::Path(p) = ty {
-            if p.path.segments.len() == 1 {
-                if p.path.segments[0].ident == "Option" {
-                    return quote! {
-                        #ident: self.#ident.clone()
-                    };
-                } else if p.path.segments[0].ident == "Vec" {
-                    return quote! {
-                        #ident: self.#ident.clone().unwrap_or_default()
-                    };
-                }
-            }
-        }
-
-        quote! {
-            #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
-        }
-    });
+    let result_fields = fields.iter().map(result_field);
 
     quote! {
         #[derive(Clone, Debug, Default, PartialEq)]
