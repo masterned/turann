@@ -2,6 +2,10 @@ use std::error::Error;
 
 use derive_builder::Builder;
 
+pub enum CommandError {
+    InsufficientPermissions,
+}
+
 #[derive(Debug, Builder)]
 pub struct Command {
     pub executable: String,

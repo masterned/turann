@@ -1,5 +1,5 @@
 use quote::quote;
-use syn::{self, parse_macro_input};
+use syn::{self, parse_macro_input, spanned::Spanned};
 
 fn has_builder_attribute(field: &syn::Field) -> bool {
     field
@@ -172,37 +172,49 @@ fn result_field(field: &syn::Field) -> proc_macro2::TokenStream {
     }
 }
 
+fn extract_fields_named(input: &syn::DeriveInput) -> Result<&syn::FieldsNamed, syn::Error> {
+    match &input.data {
+        syn::Data::Struct(data_struct) => match &data_struct.fields {
+            syn::Fields::Named(fields_named) => Ok(fields_named),
+            syn::Fields::Unnamed(_) => Err(syn::Error::new(
+                input.ident.span(),
+                "Cannot create Builder for tuple structs",
+            )),
+            syn::Fields::Unit => Err(syn::Error::new(
+                input.ident.span(),
+                "Cannot create Builder for unit structs",
+            )),
+        },
+        syn::Data::Enum(_) => Err(syn::Error::new(
+            input.span(),
+            "Cannot create Builder for enums",
+        )),
+        syn::Data::Union(_) => Err(syn::Error::new(
+            input.ident.span(),
+            "Cannot create Builder for unions",
+        )),
+    }
+}
+
 #[proc_macro_derive(Builder, attributes(builder))]
-pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn derive_builder(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(input as syn::DeriveInput);
+
+    let fields_named = match extract_fields_named(&ast) {
+        Ok(fields_named) => fields_named,
+        Err(error) => return error.into_compile_error().into(),
+    };
 
     let ident = &ast.ident;
     let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
 
-    let (each_methods_idents, each_methods) = if let syn::Data::Struct(syn::DataStruct {
-        fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
-        ..
-    }) = ast.data
-    {
-        named
-            .iter()
-            .filter(|&field| has_builder_attribute(field))
-            .filter_map(|f| EachMethod::try_from(f.clone()).ok())
-            .map(EachMethod::ident_token_stream_tuple)
-            .unzip()
-    } else {
-        (vec![], vec![])
-    };
-
-    let syn::Data::Struct(syn::DataStruct {
-        fields: syn::Fields::Named(syn::FieldsNamed {
-            named: ref fields, ..
-        }),
-        ..
-    }) = ast.data
-    else {
-        unimplemented!();
-    };
+    let syn::FieldsNamed { named: fields, .. } = fields_named;
+    let (each_methods_idents, each_methods): (Vec<_>, Vec<_>) = fields
+        .iter()
+        .filter(|&field| has_builder_attribute(field))
+        .filter_map(|f| EachMethod::try_from(f.clone()).ok())
+        .map(EachMethod::ident_token_stream_tuple)
+        .unzip();
 
     let builder_fields = fields.iter().map(builder_field);
 
