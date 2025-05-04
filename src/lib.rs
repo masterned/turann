@@ -71,35 +71,22 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
     type Error = syn::Error;
 
     fn try_from(attr: syn::Attribute) -> Result<Self, Self::Error> {
-        match attr.parse_args()? {
-            syn::Meta::Path(_path) => unimplemented!(),
-            syn::Meta::List(_meta_list) => unimplemented!(),
-            syn::Meta::NameValue(ref meta_name_value) => {
-                match meta_name_value.path.segments[0].ident.clone() {
-                    each if each == "each" => {
-                        let syn::Expr::Lit(syn::ExprLit {
-                            lit: syn::Lit::Str(ref literal),
-                            ..
-                        }) = meta_name_value.value
-                        else {
-                            return Err(syn::Error::new(
-                                attr.span(),
-                                "each attr malformed: literal missing",
-                            ));
-                        };
+        let mut builder_attribute: Option<BuilderAttribute> = None;
 
-                        Ok(Self::Each(syn::Ident::new(
-                            &literal.value(),
-                            literal.span(),
-                        )))
-                    }
-                    other => Err(syn::Error::new(
-                        attr.span(),
-                        format!("`{other}` attribute not recognized"),
-                    )),
-                }
+        attr.parse_nested_meta(|meta| match meta.path.require_ident()? {
+            each if each == "each" => {
+                let value = meta.value()?;
+                let litstr: syn::LitStr = value.parse()?;
+                let ident: syn::Ident = syn::parse_str(&litstr.value())?;
+
+                builder_attribute = Self::Each(ident).into();
+
+                Ok(())
             }
-        }
+            other => Err(meta.error(format!("`{other}` builder attribute not recognized"))),
+        })?;
+
+        builder_attribute.ok_or(syn::Error::new(attr.span(), "builder attribute malformed"))
     }
 }
 
