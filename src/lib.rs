@@ -1,47 +1,6 @@
 use quote::quote;
 use syn::{self, parse_macro_input, spanned::Spanned};
 
-fn has_builder_attribute(field: &syn::Field) -> bool {
-    field
-        .attrs
-        .iter()
-        .any(|attr| attr.path().segments[0].ident == "builder")
-}
-
-fn each_method_each_ident(attrs: &[syn::Attribute]) -> Option<syn::Ident> {
-    attrs.iter().find_map(|syn::Attribute { meta, .. }| {
-        let syn::Meta::List(syn::MetaList { tokens, .. }) = meta else {
-            return None;
-        };
-
-        let mut tokens = tokens.clone().into_iter();
-
-        let Some(proc_macro2::TokenTree::Ident(ident)) = tokens.next() else {
-            return None;
-        };
-        if ident != "each" {
-            return None;
-        }
-
-        let Some(proc_macro2::TokenTree::Punct(punct)) = tokens.next() else {
-            return None;
-        };
-        if punct.as_char() != '=' {
-            return None;
-        }
-
-        let Some(proc_macro2::TokenTree::Literal(literal)) = tokens.next() else {
-            return None;
-        };
-
-        let syn::Lit::Str(literal) = syn::Lit::new(literal) else {
-            return None;
-        };
-
-        Some(syn::Ident::new(&literal.value(), literal.span()))
-    })
-}
-
 fn inner_type(outer_type: &syn::Type) -> Option<&syn::Type> {
     let syn::Type::Path(outer_type) = outer_type else {
         return None;
@@ -74,104 +33,6 @@ fn inner_type(outer_type: &syn::Type) -> Option<&syn::Type> {
     Some(inner_type)
 }
 
-struct EachMethod {
-    ident: syn::Ident,
-    token_stream: proc_macro2::TokenStream,
-}
-
-impl EachMethod {
-    fn ident_token_stream_tuple(self) -> (syn::Ident, proc_macro2::TokenStream) {
-        (self.ident, self.token_stream)
-    }
-}
-
-impl TryFrom<syn::Field> for EachMethod {
-    type Error = ();
-
-    fn try_from(
-        syn::Field {
-            ty, attrs, ident, ..
-        }: syn::Field,
-    ) -> Result<Self, Self::Error> {
-        let each_ident = each_method_each_ident(&attrs).ok_or(())?;
-        let internal_ty = inner_type(&ty).ok_or(())?.clone();
-        let outer_ident = ident.clone().ok_or(())?;
-
-        Ok(EachMethod {
-            ident: each_ident.clone(),
-            token_stream: quote! {pub fn #each_ident(&mut self, #each_ident: impl Into<#internal_ty>) -> &mut Self {
-                self.#outer_ident.get_or_insert_default().push(#each_ident.into());
-
-                self
-            }},
-        })
-    }
-}
-
-fn builder_field(field: &syn::Field) -> proc_macro2::TokenStream {
-    let ident = &field.ident;
-    let ty = &field.ty;
-
-    if let syn::Type::Path(p) = ty {
-        if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
-            return quote! { #ident: #ty };
-        }
-    }
-
-    quote! { #ident: std::option::Option<#ty> }
-}
-
-fn is_not_each_method(each_methods_idents: &[syn::Ident], field: &syn::Field) -> bool {
-    !field
-        .ident
-        .clone()
-        .is_some_and(|ident| each_methods_idents.contains(&ident))
-}
-
-fn builder_method(field: &syn::Field) -> proc_macro2::TokenStream {
-    let ident = &field.ident;
-    let ty = &field.ty;
-
-    if let syn::Type::Path(p) = ty {
-        if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
-            return quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
-                self.#ident = #ident.into();
-
-                self
-            }};
-        }
-    }
-
-    quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
-        let _ = self.#ident.insert(#ident.into());
-
-        self
-    }}
-}
-
-fn result_field(field: &syn::Field) -> proc_macro2::TokenStream {
-    let ident = &field.ident;
-    let ty = &field.ty;
-
-    if let syn::Type::Path(p) = ty {
-        if p.path.segments.len() == 1 {
-            if p.path.segments[0].ident == "Option" {
-                return quote! {
-                    #ident: self.#ident.clone()
-                };
-            } else if p.path.segments[0].ident == "Vec" {
-                return quote! {
-                    #ident: self.#ident.clone().unwrap_or_default()
-                };
-            }
-        }
-    }
-
-    quote! {
-        #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
-    }
-}
-
 fn extract_fields_named(input: &syn::DeriveInput) -> Result<&syn::FieldsNamed, syn::Error> {
     match &input.data {
         syn::Data::Struct(data_struct) => match &data_struct.fields {
@@ -196,59 +57,315 @@ fn extract_fields_named(input: &syn::DeriveInput) -> Result<&syn::FieldsNamed, s
     }
 }
 
+fn is_builder_attribute(attr: &syn::Attribute) -> bool {
+    attr.path().segments[0].ident == "builder"
+}
+
+#[derive(Debug)]
+enum BuilderAttribute {
+    Each(syn::Ident),
+    _Validate(syn::Path),
+}
+
+impl TryFrom<syn::Attribute> for BuilderAttribute {
+    type Error = syn::Error;
+
+    fn try_from(
+        ref attr @ syn::Attribute { ref meta, .. }: syn::Attribute,
+    ) -> Result<Self, Self::Error> {
+        match meta {
+            syn::Meta::Path(_path) => unimplemented!(),
+            syn::Meta::List(syn::MetaList { tokens, .. }) => {
+                let mut tokens = tokens.clone().into_iter();
+
+                let Some(proc_macro2::TokenTree::Ident(ident)) = tokens.next() else {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        "Unable to find Attribute Ident",
+                    ));
+                };
+
+                match ident {
+                    each if each == "each" => {
+                        let Some(proc_macro2::TokenTree::Punct(punct)) = tokens.next() else {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "Each attr malformed: missing '='",
+                            ));
+                        };
+                        if punct.as_char() != '=' {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "Each attr malformed: missing '='",
+                            ));
+                        }
+                        let Some(proc_macro2::TokenTree::Literal(literal)) = tokens.next() else {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "Each attr malformed: literal missing",
+                            ));
+                        };
+
+                        let syn::Lit::Str(literal) = syn::Lit::new(literal) else {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "Each attr malformed: cannot parse literal",
+                            ));
+                        };
+
+                        Ok(Self::Each(syn::Ident::new(
+                            &literal.value(),
+                            literal.span(),
+                        )))
+                    }
+                    other => Err(syn::Error::new(
+                        attr.span(),
+                        format!("Attribute `{other}` not recognized"),
+                    )),
+                }
+            }
+            syn::Meta::NameValue(_meta_name_value) => unimplemented!(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TargetField {
+    pub ident: syn::Ident,
+    pub ty: syn::Type,
+    pub builder_attributes: Vec<BuilderAttribute>,
+}
+
+impl TargetField {
+    fn quote_basic_setter(&self) -> proc_macro2::TokenStream {
+        let ident = self.ident.clone();
+        let ty = self.ty.clone();
+
+        quote! {pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
+            let _ = self.#ident.insert(#ident.into());
+
+            self
+        }}
+    }
+
+    fn quote_optional_setter(&self) -> proc_macro2::TokenStream {
+        let ident = self.ident.clone();
+        let ty = self.ty.clone();
+
+        quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
+            self.#ident = #ident.into();
+
+            self
+        }}
+    }
+
+    fn is_option_field(&self) -> bool {
+        if let syn::Type::Path(ref p) = self.ty {
+            p.path.segments.len() == 1 && p.path.segments[0].ident == "Option"
+        } else {
+            false
+        }
+    }
+
+    pub fn quote_setter(&self) -> proc_macro2::TokenStream {
+        if self.is_option_field() {
+            self.quote_optional_setter()
+        } else {
+            self.quote_basic_setter()
+        }
+    }
+
+    fn get_each_ident(&self) -> Option<syn::Ident> {
+        for attr in &self.builder_attributes {
+            if let BuilderAttribute::Each(ident) = attr {
+                return Some(ident.clone());
+            }
+        }
+        None
+    }
+
+    pub fn quote_each_method(&self) -> Option<proc_macro2::TokenStream> {
+        let each_ident = self.get_each_ident()?;
+        let internal_ty = inner_type(&self.ty)?.clone();
+        let outer_ident = self.ident.clone();
+
+        Some(
+            quote! {pub fn #each_ident(&mut self, #each_ident: impl Into<#internal_ty>) -> &mut Self {
+                self.#outer_ident.get_or_insert_default().push(#each_ident.into());
+
+                self
+            }},
+        )
+    }
+
+    pub fn quote_builder_field(&self) -> proc_macro2::TokenStream {
+        let ident = &self.ident;
+        let ty = &self.ty;
+
+        if let syn::Type::Path(p) = ty {
+            if p.path.segments.len() == 1 && p.path.segments[0].ident == "Option" {
+                return quote! { #ident: #ty };
+            }
+        }
+
+        quote! { #ident: std::option::Option<#ty> }
+    }
+
+    pub fn quote_result_field(&self) -> proc_macro2::TokenStream {
+        let ident = self.ident.clone();
+
+        if let syn::Type::Path(p) = &self.ty {
+            if p.path.segments.len() == 1 {
+                match &p.path.segments[0].ident {
+                    opt if opt == "Option" => {
+                        return quote! {
+                            #ident: self.#ident.clone()
+                        };
+                    }
+                    vec if vec == "Vec" => {
+                        return quote! {
+                            #ident: self.#ident.clone().unwrap_or_default()
+                        };
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        quote! {
+            #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
+        }
+    }
+}
+
+impl TryFrom<syn::Field> for TargetField {
+    type Error = syn::Error;
+
+    fn try_from(
+        ref field @ syn::Field {
+            ref ident,
+            ref attrs,
+            ref ty,
+            ..
+        }: syn::Field,
+    ) -> Result<Self, Self::Error> {
+        let builder_attributes = attrs
+            .iter()
+            .filter(|a| is_builder_attribute(a))
+            .filter_map(|a| BuilderAttribute::try_from(a.clone()).ok())
+            .collect();
+
+        Ok(Self {
+            ident: ident
+                .clone()
+                .ok_or_else(|| syn::Error::new(field.span(), "Unable to find field ident"))?,
+            ty: ty.clone(),
+            builder_attributes,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct TargetStruct {
+    pub ident: syn::Ident,
+    pub fields: Vec<TargetField>,
+}
+
+impl TargetStruct {
+    fn builder_fields(&self) -> proc_macro2::TokenStream {
+        let builder_fields = self.fields.iter().map(TargetField::quote_builder_field);
+
+        quote! { #(#builder_fields,)* }
+    }
+
+    fn field_setters(&self) -> proc_macro2::TokenStream {
+        let setters = self
+            .fields
+            .iter()
+            .filter(|f| f.get_each_ident().is_none())
+            .map(TargetField::quote_setter);
+
+        quote! { #(#setters)* }
+    }
+
+    fn field_each_methods(&self) -> proc_macro2::TokenStream {
+        let each_methods = self
+            .fields
+            .iter()
+            .filter_map(TargetField::quote_each_method);
+
+        quote! { #(#each_methods)* }
+    }
+
+    fn result_fields(&self) -> proc_macro2::TokenStream {
+        let result_fields = self.fields.iter().map(TargetField::quote_result_field);
+
+        quote! { #(#result_fields,)* }
+    }
+}
+
+impl TryFrom<syn::DeriveInput> for TargetStruct {
+    type Error = syn::Error;
+
+    fn try_from(input: syn::DeriveInput) -> Result<Self, Self::Error> {
+        let fields_named = extract_fields_named(&input)?;
+
+        let ident = input.ident.clone();
+
+        let fields = fields_named
+            .named
+            .iter()
+            .cloned()
+            .filter_map(|f| f.try_into().ok())
+            .collect();
+
+        Ok(Self { ident, fields })
+    }
+}
+
+impl From<TargetStruct> for proc_macro2::TokenStream {
+    fn from(value: TargetStruct) -> Self {
+        let ident = value.ident.clone();
+        let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
+        let builder_fields = value.builder_fields();
+        let builder_methods = value.field_setters();
+        let each_methods = value.field_each_methods();
+        let result_fields = value.result_fields();
+
+        quote! {
+            #[derive(Clone, Debug, Default, PartialEq)]
+            pub struct #builder_ident {
+                #builder_fields
+            }
+
+            impl #builder_ident {
+                #builder_methods
+
+                #each_methods
+
+                pub fn build(&self) -> std::result::Result<#ident, Box<dyn std::error::Error>> {
+                    Ok(#ident {
+                        #result_fields
+                    })
+                }
+            }
+
+            impl #ident {
+                pub fn builder() -> #builder_ident {
+                    #builder_ident::default()
+                }
+            }
+
+        }
+    }
+}
+
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive_builder(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(input as syn::DeriveInput);
 
-    let fields_named = match extract_fields_named(&ast) {
-        Ok(fields_named) => fields_named,
-        Err(error) => return error.into_compile_error().into(),
-    };
-
-    let ident = &ast.ident;
-    let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
-
-    let syn::FieldsNamed { named: fields, .. } = fields_named;
-    let (each_methods_idents, each_methods): (Vec<_>, Vec<_>) = fields
-        .iter()
-        .filter(|&field| has_builder_attribute(field))
-        .filter_map(|f| EachMethod::try_from(f.clone()).ok())
-        .map(EachMethod::ident_token_stream_tuple)
-        .unzip();
-
-    let builder_fields = fields.iter().map(builder_field);
-
-    let builder_methods = fields
-        .iter()
-        .filter(|&field| is_not_each_method(&each_methods_idents, field))
-        .map(builder_method);
-
-    let result_fields = fields.iter().map(result_field);
-
-    quote! {
-        #[derive(Clone, Debug, Default, PartialEq)]
-        pub struct #builder_ident {
-            #(#builder_fields,)*
-        }
-
-        impl #builder_ident {
-            #(#builder_methods)*
-
-            #(#each_methods)*
-
-            pub fn build(&self) -> std::result::Result<#ident, Box<dyn std::error::Error>> {
-                Ok(#ident {
-                    #(#result_fields,)*
-                })
-            }
-        }
-
-        impl #ident {
-            pub fn builder () -> #builder_ident {
-                #builder_ident::default()
-            }
-        }
-
+    match TargetStruct::try_from(ast) {
+        Ok(succ) => proc_macro2::TokenStream::from(succ).into(),
+        Err(fail) => fail.into_compile_error().into(),
     }
-    .into()
 }
