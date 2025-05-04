@@ -70,46 +70,21 @@ enum BuilderAttribute {
 impl TryFrom<syn::Attribute> for BuilderAttribute {
     type Error = syn::Error;
 
-    fn try_from(
-        ref attr @ syn::Attribute { ref meta, .. }: syn::Attribute,
-    ) -> Result<Self, Self::Error> {
-        match meta {
+    fn try_from(attr: syn::Attribute) -> Result<Self, Self::Error> {
+        match attr.parse_args()? {
             syn::Meta::Path(_path) => unimplemented!(),
-            syn::Meta::List(syn::MetaList { tokens, .. }) => {
-                let mut tokens = tokens.clone().into_iter();
-
-                let Some(proc_macro2::TokenTree::Ident(ident)) = tokens.next() else {
-                    return Err(syn::Error::new(
-                        attr.span(),
-                        "Unable to find Attribute Ident",
-                    ));
-                };
-
-                match ident {
+            syn::Meta::List(_meta_list) => unimplemented!(),
+            syn::Meta::NameValue(ref meta_name_value) => {
+                match meta_name_value.path.segments[0].ident.clone() {
                     each if each == "each" => {
-                        let Some(proc_macro2::TokenTree::Punct(punct)) = tokens.next() else {
+                        let syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(ref literal),
+                            ..
+                        }) = meta_name_value.value
+                        else {
                             return Err(syn::Error::new(
                                 attr.span(),
-                                "Each attr malformed: missing '='",
-                            ));
-                        };
-                        if punct.as_char() != '=' {
-                            return Err(syn::Error::new(
-                                attr.span(),
-                                "Each attr malformed: missing '='",
-                            ));
-                        }
-                        let Some(proc_macro2::TokenTree::Literal(literal)) = tokens.next() else {
-                            return Err(syn::Error::new(
-                                attr.span(),
-                                "Each attr malformed: literal missing",
-                            ));
-                        };
-
-                        let syn::Lit::Str(literal) = syn::Lit::new(literal) else {
-                            return Err(syn::Error::new(
-                                attr.span(),
-                                "Each attr malformed: cannot parse literal",
+                                "each attr malformed: literal missing",
                             ));
                         };
 
@@ -120,11 +95,10 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
                     }
                     other => Err(syn::Error::new(
                         attr.span(),
-                        format!("Attribute `{other}` not recognized"),
+                        format!("`{other}` attribute not recognized"),
                     )),
                 }
             }
-            syn::Meta::NameValue(_meta_name_value) => unimplemented!(),
         }
     }
 }
@@ -133,7 +107,7 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
 struct TargetField {
     pub ident: syn::Ident,
     pub ty: syn::Type,
-    pub builder_attributes: Vec<BuilderAttribute>,
+    pub builder_attributes: Vec<Result<BuilderAttribute, syn::Error>>,
 }
 
 impl TargetField {
@@ -177,7 +151,7 @@ impl TargetField {
 
     fn get_each_ident(&self) -> Option<syn::Ident> {
         for attr in &self.builder_attributes {
-            if let BuilderAttribute::Each(ident) = attr {
+            if let Ok(BuilderAttribute::Each(ident)) = attr {
                 return Some(ident.clone());
             }
         }
@@ -236,6 +210,17 @@ impl TargetField {
             #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
         }
     }
+
+    pub fn quote_attr_errors(&self) -> proc_macro2::TokenStream {
+        let errors = self.builder_attributes.iter().filter_map(|a| match a {
+            Ok(_) => None,
+            Err(e) => proc_macro2::TokenStream::from(e.to_compile_error()).into(),
+        });
+
+        quote! {
+            #(#errors)*
+        }
+    }
 }
 
 impl TryFrom<syn::Field> for TargetField {
@@ -252,7 +237,8 @@ impl TryFrom<syn::Field> for TargetField {
         let builder_attributes = attrs
             .iter()
             .filter(|a| is_builder_attribute(a))
-            .filter_map(|a| BuilderAttribute::try_from(a.clone()).ok())
+            .cloned()
+            .map(BuilderAttribute::try_from)
             .collect();
 
         Ok(Self {
@@ -302,6 +288,12 @@ impl TargetStruct {
 
         quote! { #(#result_fields,)* }
     }
+
+    fn field_attr_errors(&self) -> proc_macro2::TokenStream {
+        let field_attr_errors = self.fields.iter().map(TargetField::quote_attr_errors);
+
+        quote! { #(#field_attr_errors)* }
+    }
 }
 
 impl TryFrom<syn::DeriveInput> for TargetStruct {
@@ -331,8 +323,11 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
         let builder_methods = value.field_setters();
         let each_methods = value.field_each_methods();
         let result_fields = value.result_fields();
+        let field_attr_errors = value.field_attr_errors();
 
         quote! {
+            #field_attr_errors
+
             #[derive(Clone, Debug, Default, PartialEq)]
             pub struct #builder_ident {
                 #builder_fields
