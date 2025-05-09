@@ -71,23 +71,23 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
     type Error = syn::Error;
 
     fn try_from(attr: syn::Attribute) -> syn::Result<Self> {
-        let mut builder_attribute: std::option::Option<BuilderAttribute> =
-            std::option::Option::None;
+        let mut builder_each = std::option::Option::None::<BuilderAttribute>;
 
-        attr.parse_nested_meta(|meta| match meta.path.require_ident()? {
-            each if each == "each" => {
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("each") {
                 let value = meta.value()?;
                 let litstr: syn::LitStr = value.parse()?;
                 let ident: syn::Ident = syn::parse_str(&litstr.value())?;
 
-                builder_attribute = Self::Each(ident).into();
+                builder_each = Self::Each(ident).into();
 
-                Ok(())
+                return Ok(());
             }
-            other => Err(meta.error(format!("`{other}` builder attribute not recognized"))),
+
+            Err(meta.error(format!("builder attribute not recognized")))
         })?;
 
-        builder_attribute.ok_or(syn::Error::new(attr.span(), "builder attribute malformed"))
+        builder_each.ok_or(syn::Error::new(attr.span(), "builder attribute malformed"))
     }
 }
 

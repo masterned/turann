@@ -1,4 +1,4 @@
-error: `eac` builder attribute not recognized
+error: builder attribute not recognized
   --> tests/08-unrecognized-attribute.rs:22:15
    |
 22 |     #[builder(eac = "arg")]
