@@ -1,39 +1,39 @@
 use quote::quote;
 use syn::{self, parse_macro_input, spanned::Spanned};
 
-fn inner_type(outer_type: &syn::Type) -> Option<&syn::Type> {
+fn inner_type(outer_type: &syn::Type) -> std::option::Option<&syn::Type> {
     let syn::Type::Path(outer_type) = outer_type else {
-        return None;
+        return std::option::Option::None;
     };
 
     if outer_type.qself.is_some() {
-        return None;
+        return std::option::Option::None;
     }
 
     let outer_type = &outer_type.path;
 
     if outer_type.segments.is_empty() {
-        return None;
+        return std::option::Option::None;
     }
 
     let last_segment = outer_type.segments.last()?;
 
     let syn::PathArguments::AngleBracketed(generics) = &last_segment.arguments else {
-        return None;
+        return std::option::Option::None;
     };
 
     if generics.args.len() != 1 {
-        return None;
+        return std::option::Option::None;
     }
 
     let syn::GenericArgument::Type(inner_type) = &generics.args[0] else {
-        return None;
+        return std::option::Option::None;
     };
 
-    Some(inner_type)
+    std::option::Option::Some(inner_type)
 }
 
-fn extract_fields_named(input: &syn::DeriveInput) -> Result<&syn::FieldsNamed, syn::Error> {
+fn extract_fields_named(input: &syn::DeriveInput) -> syn::Result<&syn::FieldsNamed> {
     match &input.data {
         syn::Data::Struct(data_struct) => match &data_struct.fields {
             syn::Fields::Named(fields_named) => Ok(fields_named),
@@ -70,8 +70,9 @@ enum BuilderAttribute {
 impl TryFrom<syn::Attribute> for BuilderAttribute {
     type Error = syn::Error;
 
-    fn try_from(attr: syn::Attribute) -> Result<Self, Self::Error> {
-        let mut builder_attribute: Option<BuilderAttribute> = None;
+    fn try_from(attr: syn::Attribute) -> syn::Result<Self> {
+        let mut builder_attribute: std::option::Option<BuilderAttribute> =
+            std::option::Option::None;
 
         attr.parse_nested_meta(|meta| match meta.path.require_ident()? {
             each if each == "each" => {
@@ -94,7 +95,7 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
 struct TargetField {
     pub ident: syn::Ident,
     pub ty: syn::Type,
-    pub builder_attributes: Vec<Result<BuilderAttribute, syn::Error>>,
+    pub builder_attributes: Vec<syn::Result<BuilderAttribute>>,
 }
 
 impl TargetField {
@@ -136,21 +137,21 @@ impl TargetField {
         }
     }
 
-    fn get_each_ident(&self) -> Option<syn::Ident> {
+    fn get_each_ident(&self) -> std::option::Option<syn::Ident> {
         for attr in &self.builder_attributes {
             if let Ok(BuilderAttribute::Each(ident)) = attr {
-                return Some(ident.clone());
+                return std::option::Option::Some(ident.clone());
             }
         }
-        None
+        std::option::Option::None
     }
 
-    pub fn quote_each_method(&self) -> Option<proc_macro2::TokenStream> {
+    pub fn quote_each_method(&self) -> std::option::Option<proc_macro2::TokenStream> {
         let each_ident = self.get_each_ident()?;
         let internal_ty = inner_type(&self.ty)?.clone();
         let outer_ident = self.ident.clone();
 
-        Some(
+        std::option::Option::Some(
             quote! {pub fn #each_ident(&mut self, #each_ident: impl Into<#internal_ty>) -> &mut Self {
                 self.#outer_ident.get_or_insert_default().push(#each_ident.into());
 
@@ -200,7 +201,7 @@ impl TargetField {
 
     pub fn quote_attr_errors(&self) -> proc_macro2::TokenStream {
         let errors = self.builder_attributes.iter().filter_map(|a| match a {
-            Ok(_) => None,
+            Ok(_) => std::option::Option::None,
             Err(e) => proc_macro2::TokenStream::from(e.to_compile_error()).into(),
         });
 
@@ -220,7 +221,7 @@ impl TryFrom<syn::Field> for TargetField {
             ref ty,
             ..
         }: syn::Field,
-    ) -> Result<Self, Self::Error> {
+    ) -> syn::Result<Self> {
         let builder_attributes = attrs
             .iter()
             .filter(|a| is_builder_attribute(a))
@@ -286,7 +287,7 @@ impl TargetStruct {
 impl TryFrom<syn::DeriveInput> for TargetStruct {
     type Error = syn::Error;
 
-    fn try_from(input: syn::DeriveInput) -> Result<Self, Self::Error> {
+    fn try_from(input: syn::DeriveInput) -> syn::Result<Self> {
         let fields_named = extract_fields_named(&input)?;
 
         let ident = input.ident.clone();
@@ -325,7 +326,7 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
 
                 #each_methods
 
-                pub fn build(&self) -> std::result::Result<#ident, Box<dyn std::error::Error>> {
+                pub fn build(&self) -> std::result::Result<#ident, std::boxed::Box<dyn std::error::Error>> {
                     Ok(#ident {
                         #result_fields
                     })
