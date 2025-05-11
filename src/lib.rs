@@ -348,7 +348,7 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
                 }
             }
 
-            #[derive(Clone, Copy, Debug)]
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
             pub enum #builder_error_ident {
                 UninitializedField(&'static str),
                 InvalidField { field: &'static str, msg: &'static str },
