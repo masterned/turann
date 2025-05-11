@@ -1,5 +1,5 @@
 use quote::quote;
-use syn::{self, parse_macro_input, spanned::Spanned};
+use syn::{self, parse_macro_input, parse_quote, spanned::Spanned};
 
 fn inner_type(outer_type: &syn::Type) -> std::option::Option<&syn::Type> {
     let syn::Type::Path(outer_type) = outer_type else {
@@ -173,8 +173,12 @@ impl TargetField {
         quote! { #ident: std::option::Option<#ty> }
     }
 
-    pub fn quote_result_field(&self) -> proc_macro2::TokenStream {
+    pub fn quote_result_field(
+        &self,
+        uninitialized_error_path: syn::Path,
+    ) -> proc_macro2::TokenStream {
         let ident = self.ident.clone();
+        let ident_str = &ident.to_string();
 
         if let syn::Type::Path(p) = &self.ty {
             if p.path.segments.len() == 1 {
@@ -195,7 +199,7 @@ impl TargetField {
         }
 
         quote! {
-            #ident: self.#ident.clone().ok_or(concat!(stringify!(#ident), " is not set"))?
+            #ident: self.#ident.clone().ok_or(#uninitialized_error_path(#ident_str))?
         }
     }
 
@@ -272,7 +276,15 @@ impl TargetStruct {
     }
 
     fn result_fields(&self) -> proc_macro2::TokenStream {
-        let result_fields = self.fields.iter().map(TargetField::quote_result_field);
+        let ident = self.ident.clone();
+        let builder_error_ident =
+            syn::Ident::new(&format!("{}BuilderError", ident.to_string()), ident.span());
+        let uninitialized_error_path: syn::Path =
+            parse_quote! {#builder_error_ident::UninitializedField};
+        let result_fields = self
+            .fields
+            .iter()
+            .map(|f| TargetField::quote_result_field(f, uninitialized_error_path.clone()));
 
         quote! { #(#result_fields,)* }
     }
@@ -306,7 +318,10 @@ impl TryFrom<syn::DeriveInput> for TargetStruct {
 impl From<TargetStruct> for proc_macro2::TokenStream {
     fn from(value: TargetStruct) -> Self {
         let ident = value.ident.clone();
+        let ident_str = &ident.to_string();
         let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
+        let builder_error_ident =
+            syn::Ident::new(&format!("{}BuilderError", ident.to_string()), ident.span());
         let builder_fields = value.builder_fields();
         let builder_methods = value.field_setters();
         let each_methods = value.field_each_methods();
@@ -326,12 +341,36 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
 
                 #each_methods
 
-                pub fn build(&self) -> std::result::Result<#ident, std::boxed::Box<dyn std::error::Error>> {
+                pub fn build(&self) -> std::result::Result<#ident, #builder_error_ident> {
                     Ok(#ident {
                         #result_fields
                     })
                 }
             }
+
+            #[derive(Clone, Copy, Debug)]
+            pub enum #builder_error_ident {
+                UninitializedField(&'static str),
+                InvalidField { field: &'static str, msg: &'static str },
+            }
+
+            impl std::fmt::Display for #builder_error_ident {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(
+                        f,
+                        "cannot build {}: {}",
+                        #ident_str,
+                        match self {
+                            Self::UninitializedField(field) =>
+                                format!("`{field}` not initialized"),
+                            Self::InvalidField { field, msg } =>
+                                format!("`{field}` invalid: {msg}"),
+                        }
+                    )
+                }
+            }
+
+            impl std::error::Error for #builder_error_ident {}
 
             impl #ident {
                 pub fn builder() -> #builder_ident {
