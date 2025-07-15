@@ -1,6 +1,8 @@
 use quote::quote;
 use syn::{self, parse_macro_input, parse_quote, spanned::Spanned};
 
+mod builder_error;
+
 fn inner_type(outer_type: &syn::Type) -> std::option::Option<&syn::Type> {
     let syn::Type::Path(outer_type) = outer_type else {
         return std::option::Option::None;
