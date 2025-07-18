@@ -1,4 +1,4 @@
-use std::{borrow::Cow, error::Error};
+use std::error::Error;
 
 use derive_builder::Builder;
 
@@ -14,11 +14,10 @@ pub struct Command {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command = Command::builder()
-        .executable("cargo")
         .arg("build")
         .arg("--release")
         .current_dir("cwd".to_string())
-        .build()?;
+        .build();
 
     println!("{command:#?}");
 

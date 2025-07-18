@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 /// Occurs when the user either tries to incorrectly assign a field,
 /// or when they attempt to build the target struct while the builder
 /// is in an invalid state.
@@ -16,6 +17,7 @@ pub enum BuilderError {
     },
 }
 
+#[allow(dead_code)]
 impl BuilderError {
     pub fn missing_fields(fields: &[&str]) -> Self {
         let missing_field_names = fields
@@ -24,8 +26,12 @@ impl BuilderError {
             .reduce(|acc, next| format!("{acc}, {next}"))
             .unwrap_or_default();
         Self::InvalidState {
-            message: format!("missing required fields: {missing_field_names}").into(),
+            message: format!("missing required field(s): {missing_field_names}").into(),
         }
+    }
+
+    pub fn missing_field(field: &str) -> Self {
+        Self::missing_fields(&[field])
     }
 }
 
@@ -56,7 +62,7 @@ mod tests {
         assert_eq!(
             result,
             BuilderError::InvalidState {
-                message: "missing required fields: `one`, `two`, `three`".into()
+                message: "missing required field(s): `one`, `two`, `three`".into()
             }
         )
     }

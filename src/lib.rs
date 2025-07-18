@@ -282,7 +282,7 @@ impl TargetStruct {
         let builder_error_ident =
             syn::Ident::new(&format!("{}BuilderError", ident.to_string()), ident.span());
         let uninitialized_error_path: syn::Path =
-            parse_quote! {#builder_error_ident::UninitializedField};
+            parse_quote! {#builder_error_ident::missing_field};
         let result_fields = self
             .fields
             .iter()
@@ -350,25 +350,52 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
                 }
             }
 
-            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            /// Occurs when the user either tries to incorrectly assign a field,
+            /// or when they attempt to build the target struct while the builder
+            /// is in an invalid state.
+            #[derive(Clone, Debug, PartialEq)]
             pub enum #builder_error_ident {
-                UninitializedField(&'static str),
-                InvalidField { field: &'static str, msg: &'static str },
+                /// Typically occurs on the `build()` method. Examples include:
+                /// missing fields, constraint violations, and illogical structs.
+                InvalidState {
+                    message: std::borrow::Cow<'static, str>,
+                },
+                /// Typically occurs on the setter functions. Allows the builder
+                /// to catch problems before the user attempts to build the target.
+                InvalidField {
+                    field_name: std::borrow::Cow<'static, str>,
+                    message: std::borrow::Cow<'static, str>,
+                },
+            }
+
+            impl #builder_error_ident {
+                pub fn missing_fields(fields: &[&str]) -> Self {
+                    let missing_field_names = fields
+                        .iter()
+                        .map(|field_name| format!("`{field_name}`"))
+                        .reduce(|acc, next| format!("{acc}, {next}"))
+                        .unwrap_or_default();
+                    Self::InvalidState {
+                        message: format!("missing required field(s): {missing_field_names}").into(),
+                    }
+                }
+
+                pub fn missing_field(field: &str) -> Self {
+                    Self::missing_fields(&[field])
+                }
             }
 
             impl std::fmt::Display for #builder_error_ident {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    write!(
-                        f,
-                        "cannot build {}: {}",
-                        #ident_str,
-                        match self {
-                            Self::UninitializedField(field) =>
-                                format!("`{field}` not initialized"),
-                            Self::InvalidField { field, msg } =>
-                                format!("`{field}` invalid: {msg}"),
+                    match self {
+                        #builder_error_ident::InvalidState { message } => {
+                            write!(f, "Unable to build {}: {}", #ident_str, message)
                         }
-                    )
+                        #builder_error_ident::InvalidField {
+                            field_name,
+                            message,
+                        } => write!(f, "Unable to assign field `{field_name}`: {message}"),
+                    }
                 }
             }
 
