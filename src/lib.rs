@@ -324,11 +324,29 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
         let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
         let builder_error_ident =
             syn::Ident::new(&format!("{}BuilderError", ident.to_string()), ident.span());
+        let missing_fields_ident =
+            syn::Ident::new(&format!("Missing{}Fields", ident.to_string()), ident.span());
         let builder_fields = value.builder_fields();
         let builder_methods = value.field_setters();
         let each_methods = value.field_each_methods();
         let result_fields = value.result_fields();
         let field_attr_errors = value.field_attr_errors();
+        let missing_fields_checks = value
+            .fields
+            .iter()
+            .filter(|field| !field.is_option_field())
+            .filter(|field| {
+                if let syn::Type::Path(ref p) = field.ty {
+                    p.path.segments.len() != 1 || p.path.segments[0].ident != "Vec"
+                } else {
+                    false
+                }
+            })
+            .map(|field| {
+                let ident = field.ident.clone();
+                let ident_str = &field.ident.to_string();
+                quote! { missing_fields.add_if_none(#ident_str, &self.#ident); }
+            });
 
         quote! {
             #field_attr_errors
@@ -344,9 +362,41 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
                 #each_methods
 
                 pub fn build(&self) -> std::result::Result<#ident, #builder_error_ident> {
+                    let mut missing_fields = #missing_fields_ident::default();
+
+                    #(#missing_fields_checks)*
+
+                    missing_fields.as_builder_error()?;
+
                     Ok(#ident {
                         #result_fields
                     })
+                }
+            }
+
+            #[derive(Default)]
+            pub struct #missing_fields_ident(std::option::Option<Vec<&'static str>>);
+
+            impl #missing_fields_ident {
+                fn add(&mut self, field: &'static str) -> &Self {
+                    self.0.get_or_insert_default().push(field);
+                    self
+                }
+
+                fn add_if_none<T>(&mut self, field_name: &'static str, field: &std::option::Option<T>) -> &mut Self {
+                    if field.is_none() {
+                        self.add(field_name);
+                    }
+
+                    self
+                }
+
+                fn as_builder_error(self) -> std::result::Result<(), #builder_error_ident> {
+                    let Some(missing_fields) = self.0 else {
+                        return Ok(());
+                    };
+
+                    Err(#builder_error_ident::missing_fields(&missing_fields))
                 }
             }
 

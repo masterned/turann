@@ -5,6 +5,7 @@ use derive_builder::Builder;
 #[derive(Debug, Builder)]
 pub struct Command {
     pub executable: String,
+    pub user: String,
     #[builder(each = "arg")]
     pub args: Vec<String>,
     #[builder(each = "env")]
