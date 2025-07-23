@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use quote::quote;
 use syn::{self, parse_macro_input, parse_quote, spanned::Spanned};
 
@@ -66,9 +68,17 @@ fn is_builder_attribute(attr: &syn::Attribute) -> bool {
 #[derive(Debug)]
 enum BuilderAttribute {
     Each(syn::Ident),
-    _Validate(syn::Path),
+    Validate(syn::Path),
 }
 
+// FIXME: this needs to return a _`Vec`_ of `BuilderAttribute`,
+// a `syn::Attribute` could contain multiple `BuilderAttribute`.
+// I need to aggregate all of the errors into a single `syn::Error`.
+// If one of the conversions for the attribute fails, there's no
+// point making the rest of them work.
+// To that end, why not have a separate `BuilderAttributes` struct?
+// I could hide the type behind the abstraction (if I decide to
+// change the implementation, the API will stay the same).
 impl TryFrom<syn::Attribute> for BuilderAttribute {
     type Error = syn::Error;
 
@@ -82,6 +92,17 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
                 let ident: syn::Ident = syn::parse_str(&litstr.value())?;
 
                 builder_each = Self::Each(ident).into();
+
+                return Ok(());
+            }
+
+            if meta.path.is_ident("validate") {
+                let value = meta.value()?;
+                let path: syn::Path = value.parse()?;
+
+                builder_each = Self::Validate(path).into();
+
+                // eprintln!("{builder_each:#?}");
 
                 return Ok(());
             }
@@ -101,23 +122,43 @@ struct TargetField {
 }
 
 impl TargetField {
-    fn quote_basic_setter(&self) -> proc_macro2::TokenStream {
-        let ident = self.ident.clone();
-        let ty = self.ty.clone();
+    fn quote_validated_setter(&self, builder_error_ident: syn::Ident) -> proc_macro2::TokenStream {
+        let field_ident = &self.ident;
+        let field_type = &self.ty;
 
-        quote! {pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
-            let _ = self.#ident.insert(#ident.into());
+        let BuilderAttribute::Validate(validator) = self.builder_attributes[0].as_ref().unwrap()
+        else {
+            return quote! { /*the validator messed up*/ };
+        };
+
+        quote! {
+            pub fn #field_ident(&mut self, #field_ident: impl Into<#field_type>) -> std::result::Result<&mut Self, #builder_error_ident> {
+                #validator(#field_ident).map_err(|msg| #builder_error_ident::InvalidField {field_name: #field_ident.into(), message: msg.into()})?;
+
+                let _ = self.#field_ident.insert(#field_ident.into());
+
+                Ok(self)
+            }
+        }
+    }
+
+    fn quote_basic_setter(&self) -> proc_macro2::TokenStream {
+        let field_ident = &self.ident;
+        let field_type = &self.ty;
+
+        quote! {pub fn #field_ident(&mut self, #field_ident: impl Into<#field_type>) -> &mut Self {
+            let _ = self.#field_ident.insert(#field_ident.into());
 
             self
         }}
     }
 
     fn quote_optional_setter(&self) -> proc_macro2::TokenStream {
-        let ident = self.ident.clone();
-        let ty = self.ty.clone();
+        let field_ident = &self.ident;
+        let field_type = &self.ty;
 
-        quote! { pub fn #ident(&mut self, #ident: impl Into<#ty>) -> &mut Self {
-            self.#ident = #ident.into();
+        quote! { pub fn #field_ident(&mut self, #field_ident: impl Into<#field_type>) -> &mut Self {
+            self.#field_ident = #field_ident.into();
 
             self
         }}
@@ -151,7 +192,7 @@ impl TargetField {
     pub fn quote_each_method(&self) -> std::option::Option<proc_macro2::TokenStream> {
         let each_ident = self.get_each_ident()?;
         let internal_ty = inner_type(&self.ty)?.clone();
-        let outer_ident = self.ident.clone();
+        let outer_ident = &self.ident;
 
         std::option::Option::Some(
             quote! {pub fn #each_ident(&mut self, #each_ident: impl Into<#internal_ty>) -> &mut Self {
@@ -179,20 +220,20 @@ impl TargetField {
         &self,
         uninitialized_error_path: syn::Path,
     ) -> proc_macro2::TokenStream {
-        let ident = self.ident.clone();
-        let ident_str = &ident.to_string();
+        let field_ident = &self.ident;
+        let field_ident_string = field_ident.to_string();
 
         if let syn::Type::Path(p) = &self.ty {
             if p.path.segments.len() == 1 {
                 match &p.path.segments[0].ident {
                     opt if opt == "Option" => {
                         return quote! {
-                            #ident: self.#ident.clone()
+                            #field_ident: self.#field_ident.clone()
                         };
                     }
                     vec if vec == "Vec" => {
                         return quote! {
-                            #ident: self.#ident.clone().unwrap_or_default()
+                            #field_ident: self.#field_ident.clone().unwrap_or_default()
                         };
                     }
                     _ => (),
@@ -201,7 +242,7 @@ impl TargetField {
         }
 
         quote! {
-            #ident: self.#ident.clone().ok_or(#uninitialized_error_path(#ident_str))?
+            #field_ident: self.#field_ident.clone().ok_or(#uninitialized_error_path(#field_ident_string))?
         }
     }
 
@@ -278,9 +319,9 @@ impl TargetStruct {
     }
 
     fn result_fields(&self) -> proc_macro2::TokenStream {
-        let ident = self.ident.clone();
+        let struct_ident = &self.ident;
         let builder_error_ident =
-            syn::Ident::new(&format!("{}BuilderError", ident.to_string()), ident.span());
+            syn::Ident::new(&format!("{struct_ident}BuilderError"), struct_ident.span());
         let uninitialized_error_path: syn::Path =
             parse_quote! {#builder_error_ident::missing_field};
         let result_fields = self
@@ -304,7 +345,7 @@ impl TryFrom<syn::DeriveInput> for TargetStruct {
     fn try_from(input: syn::DeriveInput) -> syn::Result<Self> {
         let fields_named = extract_fields_named(&input)?;
 
-        let ident = input.ident.clone();
+        let struct_ident = &input.ident;
 
         let fields = fields_named
             .named
@@ -313,19 +354,24 @@ impl TryFrom<syn::DeriveInput> for TargetStruct {
             .filter_map(|f| f.try_into().ok())
             .collect();
 
-        Ok(Self { ident, fields })
+        Ok(Self {
+            ident: struct_ident.clone(),
+            fields,
+        })
     }
 }
 
 impl From<TargetStruct> for proc_macro2::TokenStream {
     fn from(value: TargetStruct) -> Self {
-        let ident = value.ident.clone();
-        let ident_str = &ident.to_string();
-        let builder_ident = syn::Ident::new(&format!("{ident}Builder"), ident.span());
+        let struct_ident = &value.ident;
+        let struct_ident_string = struct_ident.to_string();
+        let builder_ident = syn::Ident::new(&format!("{struct_ident}Builder"), struct_ident.span());
         let builder_error_ident =
-            syn::Ident::new(&format!("{}BuilderError", ident.to_string()), ident.span());
-        let missing_fields_ident =
-            syn::Ident::new(&format!("Missing{}Fields", ident.to_string()), ident.span());
+            syn::Ident::new(&format!("{struct_ident}BuilderError"), struct_ident.span());
+        let missing_fields_ident = syn::Ident::new(
+            &format!("Missing{struct_ident}Fields",),
+            struct_ident.span(),
+        );
         let builder_fields = value.builder_fields();
         let builder_methods = value.field_setters();
         let each_methods = value.field_each_methods();
@@ -343,9 +389,9 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
                 }
             })
             .map(|field| {
-                let ident = field.ident.clone();
-                let ident_str = &field.ident.to_string();
-                quote! { missing_fields.add_if_none(#ident_str, &self.#ident); }
+                let field_ident = &field.ident;
+                let field_ident_string = field_ident.to_string();
+                quote! { missing_fields.add_if_none(#field_ident_string, &self.#field_ident); }
             });
 
         quote! {
@@ -361,14 +407,14 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
 
                 #each_methods
 
-                pub fn build(&self) -> std::result::Result<#ident, #builder_error_ident> {
+                pub fn build(&self) -> std::result::Result<#struct_ident, #builder_error_ident> {
                     let mut missing_fields = #missing_fields_ident::default();
 
                     #(#missing_fields_checks)*
 
                     missing_fields.as_builder_error()?;
 
-                    Ok(#ident {
+                    Ok(#struct_ident {
                         #result_fields
                     })
                 }
@@ -439,7 +485,7 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                     match self {
                         #builder_error_ident::InvalidState { message } => {
-                            write!(f, "Unable to build {}: {}", #ident_str, message)
+                            write!(f, "Unable to build {}: {}", #struct_ident_string, message)
                         }
                         #builder_error_ident::InvalidField {
                             field_name,
@@ -451,7 +497,7 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
 
             impl std::error::Error for #builder_error_ident {}
 
-            impl #ident {
+            impl #struct_ident {
                 pub fn builder() -> #builder_ident {
                     #builder_ident::default()
                 }
