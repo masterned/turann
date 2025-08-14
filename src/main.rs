@@ -35,9 +35,11 @@ fn as_b_e(validation_result: Result<(), &'static str>) -> Result<(), CommandBuil
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command = Command::builder()
-        .arg("build")
-        .arg("--release")
-        .current_dir("cwd".to_string())
+        .executable("cat")
+        .user("rms")
+        .arg("foo.txt")
+        .arg("bar.txt")
+        .current_dir("/home/rms".to_string())
         .build();
 
     println!("{command:#?}");

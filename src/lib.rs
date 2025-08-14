@@ -61,56 +61,63 @@ fn extract_fields_named(input: &syn::DeriveInput) -> syn::Result<&syn::FieldsNam
     }
 }
 
-fn is_builder_attribute(attr: &syn::Attribute) -> bool {
-    attr.path().segments[0].ident == "builder"
-}
-
 #[derive(Debug)]
 enum BuilderAttribute {
     Each(syn::Ident),
     Validate(syn::Path),
 }
 
-// FIXME: this needs to return a _`Vec`_ of `BuilderAttribute`,
-// a `syn::Attribute` could contain multiple `BuilderAttribute`.
-// I need to aggregate all of the errors into a single `syn::Error`.
-// If one of the conversions for the attribute fails, there's no
-// point making the rest of them work.
-// To that end, why not have a separate `BuilderAttributes` struct?
-// I could hide the type behind the abstraction (if I decide to
-// change the implementation, the API will stay the same).
-impl TryFrom<syn::Attribute> for BuilderAttribute {
-    type Error = syn::Error;
+#[derive(Debug, Default)]
+struct BuilderAttributes(pub std::vec::Vec<syn::Result<BuilderAttribute>>);
 
-    fn try_from(attr: syn::Attribute) -> syn::Result<Self> {
-        let mut builder_each = std::option::Option::None::<BuilderAttribute>;
+impl From<syn::Attribute> for BuilderAttributes {
+    fn from(value: syn::Attribute) -> Self {
+        let mut builder_attributes = vec![];
 
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("each") {
-                let value = meta.value()?;
-                let litstr: syn::LitStr = value.parse()?;
-                let ident: syn::Ident = syn::parse_str(&litstr.value())?;
+        if value.path().is_ident("builder") {
+            if let Err(err) = value.parse_nested_meta(|meta| {
+                if meta.path.is_ident("each") {
+                    let value = meta.value()?;
+                    let litstr: syn::LitStr = value.parse()?;
+                    let ident: syn::Ident = syn::parse_str(&litstr.value())?;
 
-                builder_each = Self::Each(ident).into();
+                    builder_attributes.push(Ok(BuilderAttribute::Each(ident)));
 
-                return Ok(());
-            }
+                    return Ok(());
+                }
 
-            if meta.path.is_ident("validate") {
-                let value = meta.value()?;
-                let path: syn::Path = value.parse()?;
+                if meta.path.is_ident("validate") {
+                    let value = meta.value()?;
+                    let path: syn::Path = value.parse()?;
 
-                builder_each = Self::Validate(path).into();
+                    builder_attributes.push(Ok(BuilderAttribute::Validate(path)));
 
-                // eprintln!("{builder_each:#?}");
+                    return Ok(());
+                }
 
-                return Ok(());
-            }
+                Err(meta.error(format!("builder attribute not recognized")))
+            }) {
+                builder_attributes.push(Err(err));
+            };
+        }
 
-            Err(meta.error(format!("builder attribute not recognized")))
-        })?;
+        BuilderAttributes(builder_attributes)
+    }
+}
 
-        builder_each.ok_or(syn::Error::new(attr.span(), "builder attribute malformed"))
+impl IntoIterator for BuilderAttributes {
+    type Item = syn::Result<BuilderAttribute>;
+
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<syn::Result<BuilderAttribute>> for BuilderAttributes {
+    fn from_iter<T: IntoIterator<Item = syn::Result<BuilderAttribute>>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 
@@ -118,7 +125,7 @@ impl TryFrom<syn::Attribute> for BuilderAttribute {
 struct TargetField {
     pub ident: syn::Ident,
     pub ty: syn::Type,
-    pub builder_attributes: Vec<syn::Result<BuilderAttribute>>,
+    pub builder_attributes: BuilderAttributes,
 }
 
 impl TargetField {
@@ -126,7 +133,7 @@ impl TargetField {
         let field_ident = &self.ident;
         let field_type = &self.ty;
 
-        let BuilderAttribute::Validate(validator) = self.builder_attributes[0].as_ref().unwrap()
+        let BuilderAttribute::Validate(validator) = self.builder_attributes.0[0].as_ref().unwrap()
         else {
             return quote! { /*the validator messed up*/ };
         };
@@ -181,7 +188,7 @@ impl TargetField {
     }
 
     fn get_each_ident(&self) -> std::option::Option<syn::Ident> {
-        for attr in &self.builder_attributes {
+        for attr in &self.builder_attributes.0 {
             if let Ok(BuilderAttribute::Each(ident)) = attr {
                 return std::option::Option::Some(ident.clone());
             }
@@ -247,7 +254,7 @@ impl TargetField {
     }
 
     pub fn quote_attr_errors(&self) -> proc_macro2::TokenStream {
-        let errors = self.builder_attributes.iter().filter_map(|a| match a {
+        let errors = self.builder_attributes.0.iter().filter_map(|a| match a {
             Ok(_) => std::option::Option::None,
             Err(e) => proc_macro2::TokenStream::from(e.to_compile_error()).into(),
         });
@@ -271,9 +278,8 @@ impl TryFrom<syn::Field> for TargetField {
     ) -> syn::Result<Self> {
         let builder_attributes = attrs
             .iter()
-            .filter(|a| is_builder_attribute(a))
             .cloned()
-            .map(BuilderAttribute::try_from)
+            .flat_map(BuilderAttributes::from)
             .collect();
 
         Ok(Self {
