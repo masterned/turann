@@ -1,6 +1,6 @@
 use crate::target_field::TargetField;
 use quote::quote;
-use syn::{self, parse_quote, spanned::Spanned};
+use syn::{self, spanned::Spanned};
 
 fn extract_fields_named(input: &syn::DeriveInput) -> syn::Result<&syn::FieldsNamed> {
     match &input.data {
@@ -36,40 +36,22 @@ impl TargetStruct {
     fn builder_fields(&self) -> proc_macro2::TokenStream {
         let builder_fields = self.fields.iter().map(TargetField::quote_builder_field);
 
-        quote! { #(#builder_fields,)* }
+        quote! { #(#builder_fields)* }
     }
 
     fn field_setters(&self) -> proc_macro2::TokenStream {
-        let setters = self
-            .fields
-            .iter()
-            .filter(|f| f.get_each_ident().is_none())
-            .map(TargetField::quote_setter);
+        let setters = self.fields.iter().map(TargetField::quote_setter);
 
         quote! { #(#setters)* }
     }
 
-    fn field_each_methods(&self) -> proc_macro2::TokenStream {
-        let each_methods = self
-            .fields
-            .iter()
-            .filter_map(TargetField::quote_each_method);
-
-        quote! { #(#each_methods)* }
-    }
-
     fn result_fields(&self) -> proc_macro2::TokenStream {
-        let struct_ident = &self.ident;
-        let builder_error_ident =
-            syn::Ident::new(&format!("{struct_ident}BuilderError"), struct_ident.span());
-        let uninitialized_error_path: syn::Path =
-            parse_quote! {#builder_error_ident::missing_field};
         let result_fields = self
             .fields
             .iter()
-            .map(|f| TargetField::quote_result_field(f, uninitialized_error_path.clone()));
+            .map(|f| TargetField::quote_result_field(f));
 
-        quote! { #(#result_fields,)* }
+        quote! { #(#result_fields)* }
     }
 
     fn field_attr_errors(&self) -> proc_macro2::TokenStream {
@@ -113,44 +95,29 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
             struct_ident.span(),
         );
         let builder_fields = value.builder_fields();
-        let builder_methods = value.field_setters();
-        let each_methods = value.field_each_methods();
+        let field_setters = value.field_setters();
         let result_fields = value.result_fields();
         let field_attr_errors = value.field_attr_errors();
-        let missing_fields_checks = value
+        let missing_fields_validators = value
             .fields
             .iter()
-            .filter(|field| !field.is_option_field())
-            .filter(|field| {
-                if let syn::Type::Path(ref p) = field.ty {
-                    p.path.segments.len() != 1 || p.path.segments[0].ident != "Vec"
-                } else {
-                    false
-                }
-            })
-            .map(|field| {
-                let field_ident = &field.ident;
-                let field_ident_string = field_ident.to_string();
-                quote! { missing_fields.add_if_none(#field_ident_string, &self.#field_ident); }
-            });
+            .map(TargetField::quote_missing_validator);
 
         quote! {
             #field_attr_errors
 
-            #[derive(Clone, Debug, Default, PartialEq)]
+            #[derive(Clone, Debug, Default)]
             pub struct #builder_ident {
                 #builder_fields
             }
 
             impl #builder_ident {
-                #builder_methods
-
-                #each_methods
+                #field_setters
 
                 pub fn build(&self) -> std::result::Result<#struct_ident, #builder_error_ident> {
                     let mut missing_fields = #missing_fields_ident::default();
 
-                    #(#missing_fields_checks)*
+                    #(#missing_fields_validators)*
 
                     missing_fields.as_builder_error()?;
 
