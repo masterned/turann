@@ -2,6 +2,7 @@
 pub enum BuilderAttribute {
     Each(syn::Ident),
     Validate(syn::Path),
+    Default(syn::Path),
 }
 
 impl BuilderAttribute {
@@ -53,6 +54,16 @@ impl BuilderAttributes {
             })
             .collect()
     }
+
+    pub fn get_default_path(&self) -> std::option::Option<&syn::Path> {
+        for attr in self {
+            if let Ok(BuilderAttribute::Default(path)) = attr {
+                return Some(path);
+            }
+        }
+
+        None
+    }
 }
 
 impl From<syn::Attribute> for BuilderAttributes {
@@ -76,6 +87,15 @@ impl From<syn::Attribute> for BuilderAttributes {
                     let path: syn::Path = value.parse()?;
 
                     builder_attributes.push(Ok(BuilderAttribute::Validate(path)));
+
+                    return Ok(());
+                }
+
+                if meta.path.is_ident("default") {
+                    let value = meta.value()?;
+                    let path: syn::Path = value.parse()?;
+
+                    builder_attributes.push(Ok(BuilderAttribute::Default(path)));
 
                     return Ok(());
                 }

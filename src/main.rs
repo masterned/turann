@@ -4,6 +4,8 @@ use derive_builder::Builder;
 
 #[derive(Debug, Builder)]
 pub struct Target {
+    #[builder(default = Self::default_id)]
+    pub id: usize,
     #[builder(validate = Self::required_not_empty)]
     pub required: String,
     pub optional_unset: Option<String>,
@@ -15,6 +17,10 @@ pub struct Target {
 }
 
 impl TargetBuilder {
+    fn default_id() -> usize {
+        1
+    }
+
     fn required_not_empty(value: String) -> Result<String, TargetBuilderError> {
         if value.is_empty() {
             return Err(TargetBuilderError::InvalidField {

@@ -74,6 +74,10 @@ impl TargetField {
         && self.is_vec()
     }
 
+    fn has_default(&self) -> bool {
+        self.builder_attributes.get_default_path().is_some()
+    }
+
     pub fn quote_attr_errors(&self) -> proc_macro2::TokenStream {
         let errors = self.builder_attributes.0.iter().filter_map(|a| match a {
             Ok(_) => std::option::Option::None,
@@ -162,7 +166,7 @@ impl TargetField {
     }
 
     pub fn quote_missing_validator(&self) -> proc_macro2::TokenStream {
-        if self.is_optional() || self.is_vec() {
+        if self.is_optional() || self.is_vec() || self.has_default() {
             return quote! {};
         }
 
@@ -174,6 +178,12 @@ impl TargetField {
 
     pub fn quote_result_field(&self) -> proc_macro2::TokenStream {
         let field_ident = &self.ident;
+
+        if let Some(default_path) = self.builder_attributes.get_default_path() {
+            return quote! {
+                #field_ident: self.#field_ident.clone().unwrap_or_else(#default_path),
+            };
+        }
 
         if self.is_optional() || self.has_each_method() {
             return quote! {
