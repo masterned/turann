@@ -96,7 +96,7 @@ impl TargetField {
         quote! { pub #ident: std::option::Option<#ty>, }
     }
 
-    pub fn quote_setter(&self) -> proc_macro2::TokenStream {
+    pub fn quote_setter(&self, builder_error_ident: &syn::Ident) -> proc_macro2::TokenStream {
         let field_ident = &self.ident;
 
         let fn_ident = if let Some(each_ident) = self.builder_attributes.get_each_ident() {
@@ -124,18 +124,19 @@ impl TargetField {
         };
 
         let return_ty = if self.builder_attributes.get_validator_paths().len() > 0 {
-            quote! { std::result::Result<&mut Self, TargetBuilderError> }
+            quote! { std::result::Result<&mut Self, #builder_error_ident> }
         } else {
             quote! { &mut Self }
         };
 
-        let validation = if self.builder_attributes.get_validator_paths().len() > 0 {
-            quote! {
-                let value = not_empty(value)?;
-            }
-        } else {
-            quote! {}
-        };
+        let validation =
+            if let Some(validator_path) = self.builder_attributes.get_first_validator_path() {
+                quote! {
+                    let value = #validator_path(value)?;
+                }
+            } else {
+                quote! {}
+            };
 
         let return_value = if self.builder_attributes.get_validator_paths().len() > 0 {
             quote! {

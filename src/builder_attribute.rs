@@ -32,6 +32,16 @@ impl BuilderAttributes {
         None
     }
 
+    pub fn get_first_validator_path(&self) -> std::option::Option<&syn::Path> {
+        for attr in self {
+            if let Ok(BuilderAttribute::Validate(path)) = attr {
+                return Some(path);
+            }
+        }
+
+        None
+    }
+
     pub fn get_validator_paths(&self) -> std::vec::Vec<&syn::Path> {
         self.iter()
             .filter_map(|attr| {

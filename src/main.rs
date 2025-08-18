@@ -4,7 +4,7 @@ use derive_builder::Builder;
 
 #[derive(Debug, Builder)]
 pub struct Target {
-    #[builder(validate = not_empty)]
+    #[builder(validate = Self::required_not_empty)]
     pub required: String,
     pub optional_unset: Option<String>,
     pub optional_set: Option<String>,
@@ -14,14 +14,16 @@ pub struct Target {
     pub vec_multi: Vec<String>,
 }
 
-fn not_empty(value: String) -> Result<String, TargetBuilderError> {
-    if value.is_empty() {
-        return Err(TargetBuilderError::InvalidField {
-            field_name: "required".into(),
-            message: "cannot be empty".into(),
-        });
+impl TargetBuilder {
+    fn required_not_empty(value: String) -> Result<String, TargetBuilderError> {
+        if value.is_empty() {
+            return Err(TargetBuilderError::InvalidField {
+                field_name: "required".into(),
+                message: "cannot be empty".into(),
+            });
+        }
+        Ok(value)
     }
-    Ok(value)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

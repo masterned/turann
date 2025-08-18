@@ -66,7 +66,10 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
             struct_ident.span(),
         );
         let builder_fields = value.fields.iter().map(TargetField::quote_builder_field);
-        let field_setters = value.fields.iter().map(TargetField::quote_setter);
+        let field_setters = value
+            .fields
+            .iter()
+            .map(|field| field.quote_setter(&builder_error_ident));
         let result_fields = value.fields.iter().map(TargetField::quote_result_field);
         let field_attr_errors = value.fields.iter().map(TargetField::quote_attr_errors);
         let missing_fields_validators = value
