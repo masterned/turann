@@ -4,6 +4,7 @@ use derive_builder::Builder;
 
 #[derive(Debug, Builder)]
 pub struct Target {
+    #[builder(validate = not_empty)]
     pub required: String,
     pub optional_unset: Option<String>,
     pub optional_set: Option<String>,
@@ -11,6 +12,16 @@ pub struct Target {
     pub vec_empty: Vec<String>,
     #[builder(each = "multi")]
     pub vec_multi: Vec<String>,
+}
+
+fn not_empty(value: String) -> Result<String, TargetBuilderError> {
+    if value.is_empty() {
+        return Err(TargetBuilderError::InvalidField {
+            field_name: "required".into(),
+            message: "cannot be empty".into(),
+        });
+    }
+    Ok(value)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -21,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("{fail_build:#?}");
 
     builder
-        .required("required")
+        .required("required")?
         .optional_set("optional")
         .multi("one")
         .multi("two".to_string());
@@ -31,6 +42,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let target = builder.build()?;
 
     println!("{target:#?}");
+
+    let mut builder = Target::builder();
+
+    let fail_set = builder.required("");
+
+    println!("{fail_set:#?}");
 
     Ok(())
 }

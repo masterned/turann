@@ -4,6 +4,16 @@ pub enum BuilderAttribute {
     Validate(syn::Path),
 }
 
+impl BuilderAttribute {
+    fn get_validator_path(&self) -> std::option::Option<&syn::Path> {
+        if let BuilderAttribute::Validate(path) = self {
+            return Some(path);
+        };
+
+        None
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct BuilderAttributes(pub std::vec::Vec<syn::Result<BuilderAttribute>>);
 
@@ -23,7 +33,15 @@ impl BuilderAttributes {
     }
 
     pub fn get_validator_paths(&self) -> std::vec::Vec<&syn::Path> {
-        todo!()
+        self.iter()
+            .filter_map(|attr| {
+                if let Ok(attr) = attr {
+                    attr.get_validator_path()
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 

@@ -98,42 +98,64 @@ impl TargetField {
 
     pub fn quote_setter(&self) -> proc_macro2::TokenStream {
         let field_ident = &self.ident;
-        let field_type = &self.ty;
 
-        if self.is_optional() {
+        let fn_ident = if let Some(each_ident) = self.builder_attributes.get_each_ident() {
+            quote! { #each_ident }
+        } else {
+            quote! { #field_ident }
+        };
+
+        let value_type = if self.is_optional() || self.has_each_method() {
             let inner_type = inner_type(&self.ty).unwrap().clone();
+            quote! { #inner_type }
+        } else {
+            let field_type = &self.ty;
+            quote! { #field_type }
+        };
 
-            return quote! {
-                pub fn #field_ident(&mut self, value: impl Into<#inner_type>) -> &mut Self {
-                    let value = value.into();
+        let assignment = if self.has_each_method() {
+            quote! {
+                self.#field_ident.push(value);
+            }
+        } else {
+            quote! {
+                let _ = self.#field_ident.insert(value);
+            }
+        };
 
-                    let _ = self.#field_ident.insert(value);
+        let return_ty = if self.builder_attributes.get_validator_paths().len() > 0 {
+            quote! { std::result::Result<&mut Self, TargetBuilderError> }
+        } else {
+            quote! { &mut Self }
+        };
 
-                    self
-                }
-            };
-        }
+        let validation = if self.builder_attributes.get_validator_paths().len() > 0 {
+            quote! {
+                let value = not_empty(value)?;
+            }
+        } else {
+            quote! {}
+        };
 
-        if let Some(each_ident) = self.builder_attributes.get_each_ident() {
-            let inner_type = inner_type(&self.ty).unwrap().clone();
-            return quote! {
-                pub fn #each_ident(&mut self, value: impl Into<#inner_type>) -> &mut Self {
-                    let value = value.into();
-
-                    self.#field_ident.push(value);
-
-                    self
-                }
-            };
-        }
+        let return_value = if self.builder_attributes.get_validator_paths().len() > 0 {
+            quote! {
+                Ok(self)
+            }
+        } else {
+            quote! {
+                self
+            }
+        };
 
         quote! {
-            pub fn #field_ident(&mut self, value: impl Into<#field_type>) -> &mut Self {
+            pub fn #fn_ident(&mut self, value: impl std::convert::Into<#value_type>) -> #return_ty {
                 let value = value.into();
 
-                let _ = self.#field_ident.insert(value);
+                #validation
 
-                self
+                #assignment
+
+                #return_value
             }
         }
     }
