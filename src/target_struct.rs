@@ -32,35 +32,6 @@ pub struct TargetStruct {
     pub fields: Vec<TargetField>,
 }
 
-impl TargetStruct {
-    fn builder_fields(&self) -> proc_macro2::TokenStream {
-        let builder_fields = self.fields.iter().map(TargetField::quote_builder_field);
-
-        quote! { #(#builder_fields)* }
-    }
-
-    fn field_setters(&self) -> proc_macro2::TokenStream {
-        let setters = self.fields.iter().map(TargetField::quote_setter);
-
-        quote! { #(#setters)* }
-    }
-
-    fn result_fields(&self) -> proc_macro2::TokenStream {
-        let result_fields = self
-            .fields
-            .iter()
-            .map(|f| TargetField::quote_result_field(f));
-
-        quote! { #(#result_fields)* }
-    }
-
-    fn field_attr_errors(&self) -> proc_macro2::TokenStream {
-        let field_attr_errors = self.fields.iter().map(TargetField::quote_attr_errors);
-
-        quote! { #(#field_attr_errors)* }
-    }
-}
-
 impl TryFrom<syn::DeriveInput> for TargetStruct {
     type Error = syn::Error;
 
@@ -89,30 +60,30 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
         let struct_ident_string = struct_ident.to_string();
         let builder_ident = syn::Ident::new(&format!("{struct_ident}Builder"), struct_ident.span());
         let builder_error_ident =
-            syn::Ident::new(&format!("{struct_ident}BuilderError"), struct_ident.span());
+            syn::Ident::new(&format!("{builder_ident}Error"), struct_ident.span());
         let missing_fields_ident = syn::Ident::new(
             &format!("Missing{struct_ident}Fields",),
             struct_ident.span(),
         );
-        let builder_fields = value.builder_fields();
-        let field_setters = value.field_setters();
-        let result_fields = value.result_fields();
-        let field_attr_errors = value.field_attr_errors();
+        let builder_fields = value.fields.iter().map(TargetField::quote_builder_field);
+        let field_setters = value.fields.iter().map(TargetField::quote_setter);
+        let result_fields = value.fields.iter().map(TargetField::quote_result_field);
+        let field_attr_errors = value.fields.iter().map(TargetField::quote_attr_errors);
         let missing_fields_validators = value
             .fields
             .iter()
             .map(TargetField::quote_missing_validator);
 
         quote! {
-            #field_attr_errors
+            #(#field_attr_errors)*
 
             #[derive(Clone, Debug, Default)]
             pub struct #builder_ident {
-                #builder_fields
+                #(#builder_fields)*
             }
 
             impl #builder_ident {
-                #field_setters
+                #(#field_setters)*
 
                 pub fn build(&self) -> std::result::Result<#struct_ident, #builder_error_ident> {
                     let mut missing_fields = #missing_fields_ident::default();
@@ -122,7 +93,7 @@ impl From<TargetStruct> for proc_macro2::TokenStream {
                     missing_fields.as_builder_error()?;
 
                     Ok(#struct_ident {
-                        #result_fields
+                        #(#result_fields)*
                     })
                 }
             }
