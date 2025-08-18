@@ -1,3 +1,5 @@
+use syn::parse_quote;
+
 #[derive(Debug)]
 pub enum BuilderAttribute {
     Each(syn::Ident),
@@ -56,10 +58,8 @@ impl BuilderAttributes {
     }
 
     pub fn get_default_path(&self) -> std::option::Option<&syn::Path> {
-        for attr in self {
-            if let Ok(BuilderAttribute::Default(path)) = attr {
-                return Some(path);
-            }
+        if let Some(BuilderAttribute::Default(path)) = self.into_iter().flatten().next() {
+            return Some(path);
         }
 
         None
@@ -92,10 +92,18 @@ impl From<syn::Attribute> for BuilderAttributes {
                 }
 
                 if meta.path.is_ident("default") {
-                    let value = meta.value()?;
-                    let path: syn::Path = value.parse()?;
+                    builder_attributes.push(meta.value().map_or_else(
+                        |_| {
+                            Ok(BuilderAttribute::Default(parse_quote!(
+                                std::default::Default::default
+                            )))
+                        },
+                        |value| {
+                            let path: syn::Path = value.parse()?;
 
-                    builder_attributes.push(Ok(BuilderAttribute::Default(path)));
+                            Ok(BuilderAttribute::Default(path))
+                        },
+                    ));
 
                     return Ok(());
                 }

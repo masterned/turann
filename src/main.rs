@@ -4,12 +4,14 @@ use derive_builder::Builder;
 
 #[derive(Debug, Builder)]
 pub struct Target {
-    #[builder(default = Self::default_id)]
-    pub id: usize,
     #[builder(validate = Self::required_not_empty)]
     pub required: String,
     pub optional_unset: Option<String>,
     pub optional_set: Option<String>,
+    #[builder(default)]
+    pub defaulted: usize,
+    #[builder(default = Self::set_defaulted)]
+    pub defaulted_fn: usize,
     #[builder(each = "empty")]
     pub vec_empty: Vec<String>,
     #[builder(each = "multi")]
@@ -17,8 +19,8 @@ pub struct Target {
 }
 
 impl TargetBuilder {
-    fn default_id() -> usize {
-        1
+    fn set_defaulted() -> usize {
+        42
     }
 
     fn required_not_empty(value: String) -> Result<String, TargetBuilderError> {
