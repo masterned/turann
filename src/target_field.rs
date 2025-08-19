@@ -81,7 +81,7 @@ impl TargetField {
     pub fn quote_attr_errors(&self) -> proc_macro2::TokenStream {
         let errors = self.builder_attributes.0.iter().filter_map(|a| match a {
             Ok(_) => std::option::Option::None,
-            Err(e) => proc_macro2::TokenStream::from(e.to_compile_error()).into(),
+            Err(e) => e.to_compile_error().into(),
         });
 
         quote! {
@@ -127,7 +127,7 @@ impl TargetField {
             }
         };
 
-        let return_ty = if self.builder_attributes.get_validator_paths().len() > 0 {
+        let return_ty = if !self.builder_attributes.get_validator_paths().is_empty() {
             quote! { std::result::Result<&mut Self, #builder_error_ident> }
         } else {
             quote! { &mut Self }
@@ -142,7 +142,7 @@ impl TargetField {
                 quote! {}
             };
 
-        let return_value = if self.builder_attributes.get_validator_paths().len() > 0 {
+        let return_value = if !self.builder_attributes.get_validator_paths().is_empty() {
             quote! {
                 Ok(self)
             }

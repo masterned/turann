@@ -19,8 +19,8 @@ impl MissingFields {
 }
 
 impl MissingFields {
-    fn as_builder_error(self) -> Result<(), BuilderError> {
-        let Some(missing_fields) = self.0 else {
+    fn as_builder_error(&self) -> Result<(), BuilderError> {
+        let Some(missing_fields) = self.0.clone() else {
             return Ok(());
         };
 

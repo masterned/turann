@@ -11,7 +11,7 @@ impl BuilderAttribute {
     fn get_validator_path(&self) -> std::option::Option<&syn::Path> {
         if let BuilderAttribute::Validate(path) = self {
             return Some(path);
-        };
+        }
 
         None
     }
@@ -26,20 +26,16 @@ impl BuilderAttributes {
     }
 
     pub fn get_each_ident(&self) -> Option<&syn::Ident> {
-        for attr in self {
-            if let Ok(BuilderAttribute::Each(ident)) = attr {
-                return Some(ident);
-            }
+        if let Some(BuilderAttribute::Each(ident)) = self.into_iter().flatten().next() {
+            return Some(ident);
         }
 
         None
     }
 
     pub fn get_first_validator_path(&self) -> std::option::Option<&syn::Path> {
-        for attr in self {
-            if let Ok(BuilderAttribute::Validate(path)) = attr {
-                return Some(path);
-            }
+        if let Some(BuilderAttribute::Validate(path)) = self.into_iter().flatten().next() {
+            return Some(path);
         }
 
         None
@@ -108,10 +104,10 @@ impl From<syn::Attribute> for BuilderAttributes {
                     return Ok(());
                 }
 
-                Err(meta.error(format!("builder attribute not recognized")))
+                Err(meta.error("builder attribute not recognized".to_string()))
             }) {
                 builder_attributes.push(Err(err));
-            };
+            }
         }
 
         BuilderAttributes(builder_attributes)
