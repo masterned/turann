@@ -14,7 +14,7 @@
 // by other people should refer to every single thing in their expanded code
 // through an absolute path, such as std::result::Result.
 
-use derive_builder::Builder;
+use turann::Builder;
 
 type Option = ();
 type Some = ();

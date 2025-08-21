@@ -14,7 +14,7 @@
 //   - Lowering a syn::Error into an invocation of compile_error:
 //     https://docs.rs/syn/2.0/syn/struct.Error.html#method.to_compile_error
 
-use derive_builder::Builder;
+use turann::Builder;
 
 #[derive(Builder)]
 pub struct Command {

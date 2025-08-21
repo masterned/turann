@@ -52,7 +52,7 @@
 //         },
 //     )
 
-use derive_builder::Builder;
+use turann::Builder;
 
 #[derive(Builder)]
 pub struct Command {

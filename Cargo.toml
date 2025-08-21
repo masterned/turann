@@ -1,6 +1,6 @@
 [package]
-name = "derive_builder"
-version = "0.1.0"
+name = "turann"
+version = "1.0.0"
 edition = "2024"
 autotests = false
 publish = false

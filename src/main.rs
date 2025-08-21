@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use derive_builder::Builder;
+use turann::Builder;
 
 #[derive(Debug, Builder)]
 pub struct Target {
