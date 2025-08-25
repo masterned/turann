@@ -1,7 +1,7 @@
 use quote::quote;
 use syn::{self, PathArguments, spanned::Spanned};
 
-use crate::builder_attribute::BuilderAttributes;
+use crate::builder_attribute::BuilderFieldAttributes;
 
 fn is_container(ident: &'static str, ty: &syn::Type) -> bool {
     let syn::Type::Path(p) = ty else {
@@ -55,7 +55,7 @@ fn inner_type(outer_type: &syn::Type) -> std::option::Option<&syn::Type> {
 pub struct TargetField {
     pub ident: syn::Ident,
     pub ty: syn::Type,
-    pub builder_attributes: BuilderAttributes,
+    pub builder_attributes: BuilderFieldAttributes,
 }
 
 impl TargetField {
@@ -211,7 +211,7 @@ impl TryFrom<syn::Field> for TargetField {
         let builder_attributes = attrs
             .iter()
             .cloned()
-            .flat_map(BuilderAttributes::from)
+            .flat_map(BuilderFieldAttributes::from)
             .collect();
 
         Ok(Self {
