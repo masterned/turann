@@ -3,6 +3,7 @@ use std::error::Error;
 use turann::Builder;
 
 #[derive(Debug, Builder)]
+#[builder(validate = Self::multi_has_items)]
 pub struct Target {
     #[builder(validate = Self::required_not_empty)]
     pub required: String,

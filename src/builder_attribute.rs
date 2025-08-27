@@ -1,5 +1,70 @@
 use syn::parse_quote;
 
+#[derive(Clone, Debug)]
+pub enum BuilderStructAttribute {
+    Validate(syn::Path),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BuilderStructAttributes(pub std::vec::Vec<syn::Result<BuilderStructAttribute>>);
+
+impl BuilderStructAttributes {
+    pub fn iter(&self) -> std::slice::Iter<'_, syn::Result<BuilderStructAttribute>> {
+        self.0.iter()
+    }
+}
+
+impl From<syn::Attribute> for BuilderStructAttributes {
+    fn from(value: syn::Attribute) -> Self {
+        let mut attributes = vec![];
+
+        if value.path().is_ident("builder") {
+            if let Err(err) = value.parse_nested_meta(|meta| {
+                if meta.path.is_ident("validate") {
+                    let value = meta.value()?;
+                    let path: syn::Path = value.parse()?;
+
+                    attributes.push(Ok(BuilderStructAttribute::Validate(path)));
+
+                    return Ok(());
+                }
+
+                Err(meta.error("builder struct attribute not recognized".to_string()))
+            }) {
+                attributes.push(Err(err));
+            };
+        }
+
+        Self(attributes)
+    }
+}
+
+impl IntoIterator for BuilderStructAttributes {
+    type Item = syn::Result<BuilderStructAttribute>;
+
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a BuilderStructAttributes {
+    type Item = &'a syn::Result<BuilderStructAttribute>;
+
+    type IntoIter = std::slice::Iter<'a, syn::Result<BuilderStructAttribute>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl FromIterator<syn::Result<BuilderStructAttribute>> for BuilderStructAttributes {
+    fn from_iter<T: IntoIterator<Item = syn::Result<BuilderStructAttribute>>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 #[derive(Debug)]
 pub enum BuilderFieldAttribute {
     Each(syn::Ident),
@@ -64,7 +129,7 @@ impl BuilderFieldAttributes {
 
 impl From<syn::Attribute> for BuilderFieldAttributes {
     fn from(value: syn::Attribute) -> Self {
-        let mut builder_attributes = vec![];
+        let mut attributes = vec![];
 
         if value.path().is_ident("builder") {
             if let Err(err) = value.parse_nested_meta(|meta| {
@@ -73,7 +138,7 @@ impl From<syn::Attribute> for BuilderFieldAttributes {
                     let litstr: syn::LitStr = value.parse()?;
                     let ident: syn::Ident = syn::parse_str(&litstr.value())?;
 
-                    builder_attributes.push(Ok(BuilderFieldAttribute::Each(ident)));
+                    attributes.push(Ok(BuilderFieldAttribute::Each(ident)));
 
                     return Ok(());
                 }
@@ -82,13 +147,13 @@ impl From<syn::Attribute> for BuilderFieldAttributes {
                     let value = meta.value()?;
                     let path: syn::Path = value.parse()?;
 
-                    builder_attributes.push(Ok(BuilderFieldAttribute::Validate(path)));
+                    attributes.push(Ok(BuilderFieldAttribute::Validate(path)));
 
                     return Ok(());
                 }
 
                 if meta.path.is_ident("default") {
-                    builder_attributes.push(meta.value().map_or_else(
+                    attributes.push(meta.value().map_or_else(
                         |_| {
                             Ok(BuilderFieldAttribute::Default(parse_quote!(
                                 std::default::Default::default
@@ -104,13 +169,13 @@ impl From<syn::Attribute> for BuilderFieldAttributes {
                     return Ok(());
                 }
 
-                Err(meta.error("builder attribute not recognized".to_string()))
+                Err(meta.error("builder field attribute not recognized".to_string()))
             }) {
-                builder_attributes.push(Err(err));
+                attributes.push(Err(err));
             }
         }
 
-        BuilderFieldAttributes(builder_attributes)
+        BuilderFieldAttributes(attributes)
     }
 }
 
@@ -145,7 +210,17 @@ mod tests {
     #![allow(unused_imports)]
     use super::*;
 
-    mod builder_attributes {
+    mod builder_struct_attributes {
+        use super::*;
+
+        #[test]
+        #[ignore = "not yet implemented"]
+        fn _allow_for_multiple_validators() {
+            todo!()
+        }
+    }
+
+    mod builder_field_attributes {
         use super::*;
 
         #[test]
