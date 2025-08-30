@@ -1,15 +1,89 @@
 use syn::parse_quote;
 
+#[derive(Clone, Debug)]
+pub enum BuilderStructAttribute {
+    Validate(syn::Path),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BuilderStructAttributes(pub std::vec::Vec<syn::Result<BuilderStructAttribute>>);
+
+impl BuilderStructAttributes {
+    pub fn iter(&self) -> std::slice::Iter<'_, syn::Result<BuilderStructAttribute>> {
+        self.0.iter()
+    }
+
+    pub fn get_validator_path(&self) -> std::option::Option<&syn::Path> {
+        self.iter()
+            .flat_map(|attribute| match attribute {
+                Ok(BuilderStructAttribute::Validate(path)) => Some(path),
+                _ => None,
+            })
+            .next()
+    }
+}
+
+impl From<syn::Attribute> for BuilderStructAttributes {
+    fn from(value: syn::Attribute) -> Self {
+        let mut attributes = vec![];
+
+        if value.path().is_ident("builder") {
+            if let Err(err) = value.parse_nested_meta(|meta| {
+                if meta.path.is_ident("validate") {
+                    let value = meta.value()?;
+                    let path: syn::Path = value.parse()?;
+
+                    attributes.push(Ok(BuilderStructAttribute::Validate(path)));
+
+                    return Ok(());
+                }
+
+                Err(meta.error("builder struct attribute not recognized".to_string()))
+            }) {
+                attributes.push(Err(err));
+            };
+        }
+
+        Self(attributes)
+    }
+}
+
+impl IntoIterator for BuilderStructAttributes {
+    type Item = syn::Result<BuilderStructAttribute>;
+
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a BuilderStructAttributes {
+    type Item = &'a syn::Result<BuilderStructAttribute>;
+
+    type IntoIter = std::slice::Iter<'a, syn::Result<BuilderStructAttribute>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl FromIterator<syn::Result<BuilderStructAttribute>> for BuilderStructAttributes {
+    fn from_iter<T: IntoIterator<Item = syn::Result<BuilderStructAttribute>>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 #[derive(Debug)]
-pub enum BuilderAttribute {
+pub enum BuilderFieldAttribute {
     Each(syn::Ident),
     Validate(syn::Path),
     Default(syn::Path),
 }
 
-impl BuilderAttribute {
+impl BuilderFieldAttribute {
     fn get_validator_path(&self) -> std::option::Option<&syn::Path> {
-        if let BuilderAttribute::Validate(path) = self {
+        if let BuilderFieldAttribute::Validate(path) = self {
             return Some(path);
         }
 
@@ -18,15 +92,15 @@ impl BuilderAttribute {
 }
 
 #[derive(Debug, Default)]
-pub struct BuilderAttributes(pub std::vec::Vec<syn::Result<BuilderAttribute>>);
+pub struct BuilderFieldAttributes(pub std::vec::Vec<syn::Result<BuilderFieldAttribute>>);
 
-impl BuilderAttributes {
-    pub fn iter(&self) -> std::slice::Iter<'_, syn::Result<BuilderAttribute>> {
+impl BuilderFieldAttributes {
+    pub fn iter(&self) -> std::slice::Iter<'_, syn::Result<BuilderFieldAttribute>> {
         self.0.iter()
     }
 
     pub fn get_each_ident(&self) -> Option<&syn::Ident> {
-        if let Some(BuilderAttribute::Each(ident)) = self.into_iter().flatten().next() {
+        if let Some(BuilderFieldAttribute::Each(ident)) = self.into_iter().flatten().next() {
             return Some(ident);
         }
 
@@ -34,7 +108,7 @@ impl BuilderAttributes {
     }
 
     pub fn get_first_validator_path(&self) -> std::option::Option<&syn::Path> {
-        if let Some(BuilderAttribute::Validate(path)) = self.into_iter().flatten().next() {
+        if let Some(BuilderFieldAttribute::Validate(path)) = self.into_iter().flatten().next() {
             return Some(path);
         }
 
@@ -54,7 +128,7 @@ impl BuilderAttributes {
     }
 
     pub fn get_default_path(&self) -> std::option::Option<&syn::Path> {
-        if let Some(BuilderAttribute::Default(path)) = self.into_iter().flatten().next() {
+        if let Some(BuilderFieldAttribute::Default(path)) = self.into_iter().flatten().next() {
             return Some(path);
         }
 
@@ -62,9 +136,9 @@ impl BuilderAttributes {
     }
 }
 
-impl From<syn::Attribute> for BuilderAttributes {
+impl From<syn::Attribute> for BuilderFieldAttributes {
     fn from(value: syn::Attribute) -> Self {
-        let mut builder_attributes = vec![];
+        let mut attributes = vec![];
 
         if value.path().is_ident("builder") {
             if let Err(err) = value.parse_nested_meta(|meta| {
@@ -73,7 +147,7 @@ impl From<syn::Attribute> for BuilderAttributes {
                     let litstr: syn::LitStr = value.parse()?;
                     let ident: syn::Ident = syn::parse_str(&litstr.value())?;
 
-                    builder_attributes.push(Ok(BuilderAttribute::Each(ident)));
+                    attributes.push(Ok(BuilderFieldAttribute::Each(ident)));
 
                     return Ok(());
                 }
@@ -82,40 +156,40 @@ impl From<syn::Attribute> for BuilderAttributes {
                     let value = meta.value()?;
                     let path: syn::Path = value.parse()?;
 
-                    builder_attributes.push(Ok(BuilderAttribute::Validate(path)));
+                    attributes.push(Ok(BuilderFieldAttribute::Validate(path)));
 
                     return Ok(());
                 }
 
                 if meta.path.is_ident("default") {
-                    builder_attributes.push(meta.value().map_or_else(
+                    attributes.push(meta.value().map_or_else(
                         |_| {
-                            Ok(BuilderAttribute::Default(parse_quote!(
+                            Ok(BuilderFieldAttribute::Default(parse_quote!(
                                 std::default::Default::default
                             )))
                         },
                         |value| {
                             let path: syn::Path = value.parse()?;
 
-                            Ok(BuilderAttribute::Default(path))
+                            Ok(BuilderFieldAttribute::Default(path))
                         },
                     ));
 
                     return Ok(());
                 }
 
-                Err(meta.error("builder attribute not recognized".to_string()))
+                Err(meta.error("builder field attribute not recognized".to_string()))
             }) {
-                builder_attributes.push(Err(err));
+                attributes.push(Err(err));
             }
         }
 
-        BuilderAttributes(builder_attributes)
+        BuilderFieldAttributes(attributes)
     }
 }
 
-impl IntoIterator for BuilderAttributes {
-    type Item = syn::Result<BuilderAttribute>;
+impl IntoIterator for BuilderFieldAttributes {
+    type Item = syn::Result<BuilderFieldAttribute>;
 
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
@@ -124,18 +198,18 @@ impl IntoIterator for BuilderAttributes {
     }
 }
 
-impl<'a> IntoIterator for &'a BuilderAttributes {
-    type Item = &'a syn::Result<BuilderAttribute>;
+impl<'a> IntoIterator for &'a BuilderFieldAttributes {
+    type Item = &'a syn::Result<BuilderFieldAttribute>;
 
-    type IntoIter = std::slice::Iter<'a, syn::Result<BuilderAttribute>>;
+    type IntoIter = std::slice::Iter<'a, syn::Result<BuilderFieldAttribute>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }
 }
 
-impl FromIterator<syn::Result<BuilderAttribute>> for BuilderAttributes {
-    fn from_iter<T: IntoIterator<Item = syn::Result<BuilderAttribute>>>(iter: T) -> Self {
+impl FromIterator<syn::Result<BuilderFieldAttribute>> for BuilderFieldAttributes {
+    fn from_iter<T: IntoIterator<Item = syn::Result<BuilderFieldAttribute>>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
     }
 }
@@ -145,7 +219,17 @@ mod tests {
     #![allow(unused_imports)]
     use super::*;
 
-    mod builder_attributes {
+    mod builder_struct_attributes {
+        use super::*;
+
+        #[test]
+        #[ignore = "not yet implemented"]
+        fn _allow_for_multiple_validators() {
+            todo!()
+        }
+    }
+
+    mod builder_field_attributes {
         use super::*;
 
         #[test]

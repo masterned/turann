@@ -1,7 +1,7 @@
 use quote::quote;
 use syn::{self, PathArguments, spanned::Spanned};
 
-use crate::builder_attribute::BuilderAttributes;
+use crate::builder_attribute::BuilderFieldAttributes;
 
 fn is_container(ident: &'static str, ty: &syn::Type) -> bool {
     let syn::Type::Path(p) = ty else {
@@ -55,7 +55,7 @@ fn inner_type(outer_type: &syn::Type) -> std::option::Option<&syn::Type> {
 pub struct TargetField {
     pub ident: syn::Ident,
     pub ty: syn::Type,
-    pub builder_attributes: BuilderAttributes,
+    pub attributes: BuilderFieldAttributes,
 }
 
 impl TargetField {
@@ -68,18 +68,18 @@ impl TargetField {
     }
 
     fn has_each_method(&self) -> bool {
-        self.builder_attributes.get_each_ident().is_some()
+        self.attributes.get_each_ident().is_some()
 
         // FIXME: move `Vec` validation to `BuilderAttributes`
         && self.is_vec()
     }
 
     fn has_default(&self) -> bool {
-        self.builder_attributes.get_default_path().is_some()
+        self.attributes.get_default_path().is_some()
     }
 
     pub fn quote_attr_errors(&self) -> proc_macro2::TokenStream {
-        let errors = self.builder_attributes.0.iter().filter_map(|a| match a {
+        let errors = self.attributes.0.iter().filter_map(|a| match a {
             Ok(_) => std::option::Option::None,
             Err(e) => e.to_compile_error().into(),
         });
@@ -103,7 +103,7 @@ impl TargetField {
     pub fn quote_setter(&self, builder_error_ident: &syn::Ident) -> proc_macro2::TokenStream {
         let field_ident = &self.ident;
 
-        let fn_ident = if let Some(each_ident) = self.builder_attributes.get_each_ident() {
+        let fn_ident = if let Some(each_ident) = self.attributes.get_each_ident() {
             quote! { #each_ident }
         } else {
             quote! { #field_ident }
@@ -127,22 +127,21 @@ impl TargetField {
             }
         };
 
-        let return_ty = if !self.builder_attributes.get_validator_paths().is_empty() {
+        let return_ty = if !self.attributes.get_validator_paths().is_empty() {
             quote! { std::result::Result<&mut Self, #builder_error_ident> }
         } else {
             quote! { &mut Self }
         };
 
-        let validation =
-            if let Some(validator_path) = self.builder_attributes.get_first_validator_path() {
-                quote! {
-                    let value = #validator_path(value)?;
-                }
-            } else {
-                quote! {}
-            };
+        let validation = if let Some(validator_path) = self.attributes.get_first_validator_path() {
+            quote! {
+                let value = #validator_path(value)?;
+            }
+        } else {
+            quote! {}
+        };
 
-        let return_value = if !self.builder_attributes.get_validator_paths().is_empty() {
+        let return_value = if !self.attributes.get_validator_paths().is_empty() {
             quote! {
                 Ok(self)
             }
@@ -179,7 +178,7 @@ impl TargetField {
     pub fn quote_result_field(&self) -> proc_macro2::TokenStream {
         let field_ident = &self.ident;
 
-        if let Some(default_path) = self.builder_attributes.get_default_path() {
+        if let Some(default_path) = self.attributes.get_default_path() {
             return quote! {
                 #field_ident: self.#field_ident.clone().unwrap_or_else(#default_path),
             };
@@ -211,7 +210,7 @@ impl TryFrom<syn::Field> for TargetField {
         let builder_attributes = attrs
             .iter()
             .cloned()
-            .flat_map(BuilderAttributes::from)
+            .flat_map(BuilderFieldAttributes::from)
             .collect();
 
         Ok(Self {
@@ -219,7 +218,7 @@ impl TryFrom<syn::Field> for TargetField {
                 .clone()
                 .ok_or_else(|| syn::Error::new(field.span(), "Unable to find field ident"))?,
             ty: ty.clone(),
-            builder_attributes,
+            attributes: builder_attributes,
         })
     }
 }

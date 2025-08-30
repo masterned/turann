@@ -3,6 +3,7 @@ use std::error::Error;
 use turann::Builder;
 
 #[derive(Debug, Builder)]
+#[builder(validate = Self::multi_has_items)]
 pub struct Target {
     #[builder(validate = Self::required_not_empty)]
     pub required: String,
@@ -32,20 +33,33 @@ impl TargetBuilder {
         }
         Ok(value)
     }
+
+    fn multi_has_items(target: Target) -> Result<Target, TargetBuilderError> {
+        if target.vec_multi.is_empty() {
+            return Err(TargetBuilderError::InvalidState {
+                message: "vec_multi cannot be empty".into(),
+            });
+        }
+
+        Ok(target)
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut builder = Target::builder();
 
     let fail_build = builder.clone().build().unwrap_err();
-
     println!("{fail_build:#?}");
 
-    builder
-        .required("required")?
-        .optional_set("optional")
-        .multi("one")
-        .multi("two".to_string());
+    let fail_build = Target::builder().required("").unwrap_err();
+    println!("{fail_build:#?}");
+
+    builder.required("required")?.optional_set("optional");
+
+    let fail_build = builder.clone().build().unwrap_err();
+    println!("{fail_build:#?}");
+
+    builder.multi("one").multi("two".to_string());
 
     println!("{builder:#?}");
 
