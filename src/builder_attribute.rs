@@ -12,6 +12,15 @@ impl BuilderStructAttributes {
     pub fn iter(&self) -> std::slice::Iter<'_, syn::Result<BuilderStructAttribute>> {
         self.0.iter()
     }
+
+    pub fn get_validator_path(&self) -> std::option::Option<&syn::Path> {
+        self.iter()
+            .flat_map(|attribute| match attribute {
+                Ok(BuilderStructAttribute::Validate(path)) => Some(path),
+                _ => None,
+            })
+            .next()
+    }
 }
 
 impl From<syn::Attribute> for BuilderStructAttributes {

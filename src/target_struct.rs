@@ -66,6 +66,16 @@ impl TargetStruct {
 
         let result_fields = self.fields.iter().map(TargetField::quote_result_field);
 
+        let return_value = if let Some(validator_path) = self.attributes.get_validator_path() {
+            quote! {
+                #validator_path(result)
+            }
+        } else {
+            quote! {
+                Ok(result)
+            }
+        };
+
         quote! {
             impl #builder_ident {
                 #(#field_setters)*
@@ -81,7 +91,7 @@ impl TargetStruct {
                         #(#result_fields)*
                     };
 
-                    Ok(result)
+                    #return_value
                 }
             }
         }
